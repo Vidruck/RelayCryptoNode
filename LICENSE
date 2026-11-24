@@ -1,0 +1,29 @@
+LICENCIA PROPIETARIA — TODOS LOS DERECHOS RESERVADOS
+========================================================================
+Proyecto: RelayCryptoNode
+Titulares: Equipo de Desarrollo RelayCryptoNode (2026)
+
+1. RESERVA DE DERECHOS
+El código fuente, la arquitectura, la documentación técnica, los contratos de
+protocolo, las pruebas automatizadas y los activos asociados a RelayCryptoNode
+son propiedad intelectual exclusiva de sus autores. Todos los derechos
+patrimoniales y morales quedan reservados.
+
+2. RESTRICCIONES
+Salvo autorización expresa y por escrito de los titulares, queda estrictamente
+prohibido:
+  a) Copiar, reproducir, distribuir o publicar total o parcialmente el software
+     o su documentación en repositorios públicos o privados externos.
+  b) Modificar, descompilar, realizar ingeniería inversa o crear obras
+     derivadas fuera del alcance académico y operativo autorizado del equipo.
+  c) Sublicenciar, vender, alquilar o explotar comercialmente el software.
+
+3. USO AUTORIZADO
+Se autoriza únicamente su compilación, ejecución, auditoría y extensión interna
+por parte de los integrantes autorizados del proyecto RelayCryptoNode en los
+entornos de prueba y red local designados (Windows 11 y Arch Linux).
+
+4. EXCLUSIÓN DE GARANTÍAS
+Este software se proporciona "TAL CUAL", sin garantías expresas o implícitas
+de comerciabilidad o idoneidad para un propósito distinto al especificado en
+la documentación del proyecto.
