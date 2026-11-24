@@ -1,6 +1,6 @@
 # RelayCryptoNode
 
-Nodo criptográfico polimórfico multiplataforma sobre **.NET 8 LTS (C# 12)** diseñado para operar dentro de una cadena LAN de 6 equipos heterogéneos (**Windows 11** y **Arch Linux**).
+Nodo criptográfico polimórfico multiplataforma sobre **.NET 8 LTS (C# 12)** diseñado para operar dentro de una cadena LAN de  equipos heterogéneos (**Windows 11** y **Arch Linux**).
 
 Cada nodo puede asumir en caliente cualquiera de tres modalidades operativas:
 - **`Initial`**: Empaqueta documentos, texto, imágenes o lotes multimedia, calcula la huella testigo `SHA-256`, cifra con el algoritmo elegido, firma con su certificado X.509 local y transmite al siguiente nodo.
@@ -45,7 +45,7 @@ RelayCryptoNode/
 
 ---
 
-## Arranque Rápido (Windows 11 y Arch Linux)
+## Arranque Rápido (Windows 11 y Linux)
 
 Requiere únicamente **.NET 8 SDK LTS** (sin dependencias nativas obligatorias como OpenSSL).
 
