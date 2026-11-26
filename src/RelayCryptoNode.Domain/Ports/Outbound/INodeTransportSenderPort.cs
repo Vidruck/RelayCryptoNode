@@ -31,4 +31,14 @@ public interface INodeTransportSenderPort
         byte[] packageBytes,
         string packageFileName,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Solicita al nodo remoto su certificado X.509 público en formato PEM (<c>GET /api/certificate</c>).
+    /// </summary>
+    /// <param name="endpointAddress">Dirección base del nodo remoto (por ejemplo <c>http://192.168.1.20:5000</c>).</param>
+    /// <param name="cancellationToken">Token de cancelación cooperativa.</param>
+    /// <returns>Certificado PEM del nodo remoto o <c>null</c> si el nodo no lo publica.</returns>
+    Task<string?> FetchRemoteCertificatePemAsync(
+        string endpointAddress,
+        CancellationToken cancellationToken = default);
 }

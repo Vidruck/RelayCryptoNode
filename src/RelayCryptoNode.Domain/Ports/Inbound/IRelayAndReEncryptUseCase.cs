@@ -12,12 +12,16 @@ namespace RelayCryptoNode.Domain.Ports.Inbound;
 /// <param name="TargetCipherAlgorithm">Nuevo algoritmo simétrico configurado para la re-encriptación de salida.</param>
 /// <param name="TargetKeyExchangeAlgorithm">Nuevo algoritmo de envoltura/acuerdo de clave de salida.</param>
 /// <param name="TargetSignatureAlgorithm">Algoritmo de firma digital del nuevo manifiesto.</param>
+/// <param name="NextNodeCertificatePem">Certificado PEM del siguiente nodo (opcional; se solicita al nodo si es nulo).</param>
+/// <param name="ExtraMetadata">Metadatos adicionales para el manifiesto de salida.</param>
 public sealed record RelayAndReEncryptCommand(
     Guid RequestId,
     NodeIdentity NextNode,
     CipherAlgorithmType TargetCipherAlgorithm,
     KeyExchangeAlgorithmType TargetKeyExchangeAlgorithm,
-    SignatureAlgorithmType TargetSignatureAlgorithm);
+    SignatureAlgorithmType TargetSignatureAlgorithm,
+    string? NextNodeCertificatePem = null,
+    IReadOnlyDictionary<string, string>? ExtraMetadata = null);
 
 /// <summary>
 /// Resultado del relevo polimórfico ejecutado por un nodo intermedio.

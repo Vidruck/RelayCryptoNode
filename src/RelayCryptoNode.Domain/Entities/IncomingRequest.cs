@@ -93,6 +93,41 @@ public sealed class IncomingRequest
     }
 
     /// <summary>
+    /// Reconstruye una solicitud previamente persistida respetando su estado y marcas de tiempo.
+    /// Solo debe usarse por adaptadores de persistencia.
+    /// </summary>
+    /// <param name="requestId">Identificador de la solicitud.</param>
+    /// <param name="envelope">Sobre criptográfico recibido.</param>
+    /// <param name="receivedUtc">Fecha UTC de recepción.</param>
+    /// <param name="signatureValid">Resultado de la verificación de firma.</param>
+    /// <param name="integrityValid">Resultado de la verificación de integridad.</param>
+    /// <param name="validationNotes">Notas de validación.</param>
+    /// <param name="status">Estado persistido.</param>
+    /// <param name="rejectionReason">Motivo de rechazo o fallo, si existe.</param>
+    /// <param name="processedUtc">Fecha UTC del último cambio de estado, si existe.</param>
+    /// <returns>Solicitud reconstruida.</returns>
+    public static IncomingRequest Rehydrate(
+        Guid requestId,
+        CryptoEnvelope envelope,
+        DateTimeOffset receivedUtc,
+        bool signatureValid,
+        bool integrityValid,
+        string? validationNotes,
+        RequestStatus status,
+        string? rejectionReason,
+        DateTimeOffset? processedUtc)
+    {
+        var request = new IncomingRequest(requestId, envelope, receivedUtc, signatureValid, integrityValid, validationNotes)
+        {
+            Status = status,
+            RejectionReason = string.IsNullOrWhiteSpace(rejectionReason) ? null : rejectionReason.Trim(),
+            ProcessedUtc = processedUtc
+        };
+
+        return request;
+    }
+
+    /// <summary>
     /// Aprueba la solicitud para su procesamiento posterior si permanece en <see cref="RequestStatus.Pending"/>
     /// y tanto la firma como la integridad son válidas.
     /// </summary>

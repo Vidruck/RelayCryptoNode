@@ -12,12 +12,19 @@ namespace RelayCryptoNode.Domain.Ports.Inbound;
 /// <param name="CipherAlgorithm">Algoritmo simétrico seleccionado para cifrar la carga útil.</param>
 /// <param name="KeyExchangeAlgorithm">Mecanismo de envoltura o acuerdo de clave de sesión.</param>
 /// <param name="SignatureAlgorithm">Algoritmo de firma digital del manifiesto.</param>
+/// <param name="DestinationCertificatePem">
+/// Certificado PEM del nodo destino ya obtenido (opcional). Si es nulo y el intercambio de clave lo requiere,
+/// el caso de uso lo solicita al destino mediante <c>GET /api/certificate</c>.
+/// </param>
+/// <param name="ExtraMetadata">Metadatos adicionales para el manifiesto (por ejemplo el modo de clave compartida).</param>
 public sealed record EmitInitialPackageCommand(
     PayloadBundle Bundle,
     NodeIdentity DestinationNode,
     CipherAlgorithmType CipherAlgorithm,
     KeyExchangeAlgorithmType KeyExchangeAlgorithm,
-    SignatureAlgorithmType SignatureAlgorithm);
+    SignatureAlgorithmType SignatureAlgorithm,
+    string? DestinationCertificatePem = null,
+    IReadOnlyDictionary<string, string>? ExtraMetadata = null);
 
 /// <summary>
 /// Resultado de la emisión inicial de un paquete cifrado y su entrega al siguiente nodo.

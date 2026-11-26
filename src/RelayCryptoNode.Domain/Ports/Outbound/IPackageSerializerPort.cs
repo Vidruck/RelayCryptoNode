@@ -38,8 +38,18 @@ public interface IPackageSerializerPort
     /// Reconstruye un <see cref="PayloadBundle"/> a partir de los bytes descifrados en memoria.
     /// </summary>
     /// <param name="plaintextBytes">Bytes en claro recuperados.</param>
+    /// <param name="originalFileName">
+    /// Nombre original declarado en el manifiesto; se usa cuando la carga útil es un único archivo en crudo.
+    /// </param>
     /// <returns>Lote de carga útil reconstruido.</returns>
-    PayloadBundle DeserializePayloadBundle(byte[] plaintextBytes);
+    PayloadBundle DeserializePayloadBundle(byte[] plaintextBytes, string originalFileName);
+
+    /// <summary>
+    /// Obtiene los bytes canónicos del manifiesto (sin el campo <c>manifestSignatureBase64</c>) que se firman y verifican.
+    /// </summary>
+    /// <param name="envelope">Sobre criptográfico cuyo manifiesto se canonicaliza.</param>
+    /// <returns>Bytes UTF-8 del manifiesto canónico.</returns>
+    byte[] GetCanonicalManifestBytes(CryptoEnvelope envelope);
 
     /// <summary>
     /// Genera el nombre de archivo estandarizado para el paquete según el contrato de interoperabilidad.
