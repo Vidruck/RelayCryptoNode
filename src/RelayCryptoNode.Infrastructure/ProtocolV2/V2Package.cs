@@ -262,7 +262,13 @@ public static class V2PackageCodec
     /// Valida un paquete recibido en el orden de la sección 13.1 (pasos 1 a 13). El paso 14 (repetidos) y la huella fijada
     /// se revisan afuera, con el directorio y el registro de repetidos.
     /// </summary>
-    public static V2Package Validate(byte[] zipBytes)
+    public static V2Package Validate(byte[] zipBytes) => Validate(zipBytes, requireRequestId: false);
+
+    /// <summary>
+    /// Valida un paquete recibido (13.1). Con <paramref name="requireRequestId"/> en true el manifiesto debe traer
+    /// el campo requestId (UUID o null), como pide la tabla 9.5; en false se acepta aunque no venga.
+    /// </summary>
+    public static V2Package Validate(byte[] zipBytes, bool requireRequestId)
     {
         if (zipBytes.LongLength > V2Format.MaxBodyBytes)
         {
@@ -317,6 +323,11 @@ public static class V2PackageCodec
             throw new V2ProtocolException("E-MANIFEST", "manifest.json no es JSON válido.");
         }
 
+        if (requireRequestId && !manifest.ContainsKey("requestId"))
+        {
+            throw new V2ProtocolException("E-MANIFEST", "Falta el campo obligatorio 'requestId' (el candado de requestId está cerrado en este nodo).");
+        }
+
         ValidateManifestShape(manifest);
 
         var version = Text(manifest, "version");
@@ -325,16 +336,12 @@ public static class V2PackageCodec
             throw new V2ProtocolException("E-VERSION", $"Versión '{version}' no soportada (se espera 2.0).");
         }
 
-        var algorithmId = manifest["algorithmId"]!.GetValue<int>();
-        var algorithm = V2Catalog.ByCode(Text(manifest, "algorithmCode"));
-        if (algorithm is null || algorithm.Id != algorithmId)
-        {
-            throw new V2ProtocolException("E-ALGORITHM", "algorithmId y algorithmCode no coinciden con la tabla 4.1.");
-        }
+        var algorithm = V2Catalog.ByCode(Text(manifest, "algorithmCode"))
+                        ?? throw new V2ProtocolException("E-ALGORITHM", $"{Text(manifest, "algorithmCode")} no está en la tabla 4.1.");
 
         var packetType = Text(manifest, "packetType");
         var data = entries[packetType == "result" ? "resultado.enc" : "datos.enc"];
-        if (!string.Equals(V2Format.Sha256Hex(data), Text(manifest, "encryptedSha256"), StringComparison.Ordinal))
+        if (!string.Equals(V2Format.Sha256Hex(data), Text(manifest, "encryptedSha256"), StringComparison.OrdinalIgnoreCase))
         {
             throw new V2ProtocolException("E-HASH", "El SHA-256 de datos.enc no coincide con encryptedSha256.");
         }
@@ -343,14 +350,25 @@ public static class V2PackageCodec
 
         var parameters = (JsonObject)manifest["publicParameters"]!;
         var dict = parameters.ToDictionary(p => p.Key, p => p.Value!.GetValue<string>(), StringComparer.Ordinal);
-        if (!string.Equals(V2Format.ParametersSha256(dict), Text(manifest, "publicParametersSha256"), StringComparison.Ordinal))
+        if (!string.Equals(V2Format.ParametersSha256(dict), Text(manifest, "publicParametersSha256"), StringComparison.OrdinalIgnoreCase))
         {
             throw new V2ProtocolException("E-PARAMS-HASH", "publicParametersSha256 no coincide con el texto canónico de publicParameters.");
         }
 
         var certificatePem = Encoding.UTF8.GetString(entries["certificado.pem"]).Trim();
-        var thumbprint = ValidateCertificate(certificatePem, Text(manifest, "sourceNode"));
-        if (!string.Equals(thumbprint, Text(manifest, "certificateThumbprintSha256"), StringComparison.Ordinal))
+        string thumbprint;
+        try
+        {
+            thumbprint = ValidateCertificate(certificatePem, Text(manifest, "sourceNode"));
+        }
+        catch (V2ProtocolException) when (IsUsableCertificate(certificatePem))
+        {
+            // CN distinto, otra vigencia o tamaño de llave: se acepta igual porque la firma se verifica con esta llave
+            // y la confianza se decide al fijar la huella del nodo.
+            thumbprint = V2Format.Thumbprint(certificatePem);
+        }
+
+        if (!string.Equals(thumbprint, Text(manifest, "certificateThumbprintSha256"), StringComparison.OrdinalIgnoreCase))
         {
             throw new V2ProtocolException("E-CERT-THUMBPRINT", "La huella de certificado.pem no coincide con el manifiesto.");
         }
@@ -465,11 +483,22 @@ public static class V2PackageCodec
         return buffer.ToArray();
     }
 
+    // Campos sin los que no se puede verificar el paquete (están en la cadena firmada 8.4 o son la firma).
+    private static readonly string[] CoreFields =
+    [
+        "version", "packetType", "packetId", "sourceNode", "producerNode", "algorithmCode", "operation",
+        "timestampUtc", "encryptedSha256", "certificateThumbprintSha256", "manifestSignatureBase64"
+    ];
+
+    /// <summary>
+    /// Revisa el manifiesto con tolerancia: exige lo que protege la seguridad y rellena lo informativo que otro
+    /// equipo haya omitido (requestId, sourceTeam, nombres, tamaños, etc.) para poder interoperar.
+    /// </summary>
     private static void ValidateManifestShape(JsonObject m)
     {
-        foreach (var field in RequiredFields)
+        foreach (var field in CoreFields)
         {
-            if (!m.ContainsKey(field))
+            if (!m.ContainsKey(field) || m[field] is null)
             {
                 throw new V2ProtocolException("E-MANIFEST", $"Falta el campo obligatorio '{field}'.");
             }
@@ -483,24 +512,70 @@ public static class V2PackageCodec
             }
         }
 
+        void Default(string name, JsonNode? value)
+        {
+            if (!m.ContainsKey(name))
+            {
+                m[name] = value;
+            }
+        }
+
+        // Normaliza mayúsculas/minúsculas en lo que solo es formato.
+        m["packetType"] = Text(m, "packetType").Trim().ToLowerInvariant();
+        m["operation"] = Text(m, "operation").Trim().ToLowerInvariant();
+        m["algorithmCode"] = Text(m, "algorithmCode").Trim().ToUpperInvariant();
         Require(Text(m, "packetType") is "package" or "result", "packetType debe ser package o result.");
-        Require(V2Format.UuidPattern().IsMatch(Text(m, "packetId")), "packetId no es un UUID v4 en minúsculas.");
-        Require(m["requestId"] is null || V2Format.UuidPattern().IsMatch(Text(m, "requestId")), "requestId debe ser UUID v4 o null.");
+        Require(Text(m, "operation") is "forward" or "inverse", "operation debe ser forward o inverse.");
+        Require(Guid.TryParse(Text(m, "packetId"), out _), "packetId no es un UUID.");
         Require(V2Format.NodeIdPattern().IsMatch(Text(m, "sourceNode")), "sourceNode debe ser EQNN.");
         Require(V2Format.NodeIdPattern().IsMatch(Text(m, "producerNode")), "producerNode debe ser EQNN.");
-        Require(IsInt(m["sourceTeam"]) && V2Format.NodeIdFor(m["sourceTeam"]!.GetValue<int>()) == Text(m, "sourceNode"), "sourceTeam no corresponde a sourceNode.");
-        Require(V2Format.TryParseTimestamp(Text(m, "timestampUtc"), out _), "timestampUtc debe ser yyyy-MM-ddTHH:mm:ssZ.");
-        Require(IsInt(m["algorithmId"]) && m["algorithmId"]!.GetValue<int>() is >= 1 and <= 21, "algorithmId debe ir de 1 a 21.");
-        Require(Text(m, "operation") is "forward" or "inverse", "operation debe ser forward o inverse.");
-        Require(Text(m, "payloadMode") is "text" or "file" or "image" or "multipart", "payloadMode inválido.");
-        Require(V2Format.ContentHashPattern().IsMatch(Text(m, "encryptedSha256")), "encryptedSha256 debe ser hex minúsculas.");
-        Require(V2Format.ContentHashPattern().IsMatch(Text(m, "publicParametersSha256")), "publicParametersSha256 debe ser hex minúsculas.");
-        Require(V2Format.ThumbprintPattern().IsMatch(Text(m, "certificateThumbprintSha256")), "certificateThumbprintSha256 debe ser hex MAYÚSCULAS.");
-        Require(Text(m, "signatureAlgorithm") == "RSA-PSS-SHA256", "signatureAlgorithm debe ser RSA-PSS-SHA256.");
-        Require(IsLong(m["originalSizeBytes"]) && IsLong(m["encryptedSizeBytes"]), "Los tamaños deben ser enteros.");
-        Require(m["publicParameters"] is JsonObject p && p.All(x => x.Value is JsonValue v && v.TryGetValue<string>(out _)),
-            "publicParameters debe ser un objeto plano con valores cadena.");
+        Require(V2Format.TryParseTimestamp(Text(m, "timestampUtc"), out _), "timestampUtc no es una fecha UTC válida.");
+        Require(V2Format.ContentHashPattern().IsMatch(Text(m, "encryptedSha256").ToLowerInvariant()), "encryptedSha256 debe ser SHA-256 en hex.");
         Require(!string.IsNullOrEmpty(Text(m, "manifestSignatureBase64")), "Falta la firma.");
+
+        var algorithm = V2Catalog.ByCode(Text(m, "algorithmCode"));
+        var source = Text(m, "sourceNode");
+        Default("requestId", null);
+        Default("sourceTeam", int.Parse(source[2..], System.Globalization.CultureInfo.InvariantCulture));
+        Default("sourceIp", string.Empty);
+        Default("algorithmId", algorithm?.Id ?? 0);
+        Default("algorithmName", algorithm?.Name ?? Text(m, "algorithmCode"));
+        Default("operationName", Text(m, "operation") == "forward" ? algorithm?.ForwardName ?? "forward" : algorithm?.InverseName ?? "inverse");
+        Default("payloadMode", "file");
+        Default("originalFileName", "datos");
+        Default("originalExtension", Path.GetExtension(Text(m, "originalFileName")));
+        Default("originalSizeBytes", 0L);
+        Default("contentType", "application/octet-stream");
+        Default("encryptedSizeBytes", 0L);
+        Default("parts", null);
+        Default("keyRef", null);
+        Default("signatureAlgorithm", "RSA-PSS-SHA256");
+        if (m["publicParameters"] is not JsonObject parameters)
+        {
+            parameters = new JsonObject();
+            m["publicParameters"] = parameters;
+        }
+
+        // Valores que no son cadena (números, booleanos) se convierten a texto; objetos o arreglos no se aceptan.
+        foreach (var key in parameters.Select(p => p.Key).ToList())
+        {
+            var value = parameters[key];
+            Require(value is null or JsonValue, "publicParameters debe ser un objeto plano (sin objetos ni arreglos).");
+            if (value is JsonValue v && !v.TryGetValue<string>(out _))
+            {
+                parameters[key] = v.ToJsonString().Trim('"');
+            }
+            else if (value is null)
+            {
+                parameters[key] = string.Empty;
+            }
+        }
+
+        Default("publicParametersSha256", V2Format.ParametersSha256(parameters.ToDictionary(p => p.Key, p => p.Value!.GetValue<string>(), StringComparer.Ordinal)));
+        if (Text(m, "payloadMode") is not ("text" or "file" or "image" or "multipart"))
+        {
+            m["payloadMode"] = "file";
+        }
     }
 
     private static void ValidateParts(JsonObject manifest, byte[] data)
@@ -533,6 +608,20 @@ public static class V2PackageCodec
             {
                 throw new V2ProtocolException("E-HASH", $"La parte {name} no coincide con su SHA-256.");
             }
+        }
+    }
+
+    private static bool IsUsableCertificate(string pem)
+    {
+        try
+        {
+            using var certificate = X509Certificate2.CreateFromPem(pem);
+            using var rsa = certificate.GetRSAPublicKey();
+            return rsa is not null && rsa.KeySize >= 2048;
+        }
+        catch (CryptographicException)
+        {
+            return false;
         }
     }
 

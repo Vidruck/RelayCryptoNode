@@ -322,10 +322,33 @@ input[type=file]::file-selector-button { background: var(--purple-lo); color: va
 .mode-banner.v3 { border-left-color: var(--green); }
 .mode-banner.v3 b { color: var(--green); }
 
-.login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; position: relative; z-index: 2; }
-.login-card { width: min(420px, 100%); }
-.login-card h1 { margin: 6px 0 2px; }
-.login-card .form { margin-top: 18px; }
-.login-card .btn { width: 100%; justify-content: center; }
-.login-error { min-height: 20px; color: var(--red); font: 13px var(--mono); }
 @media (max-width: 760px) { .hud-controls { order: 3; margin: 10px 0 0; width: 100%; } }
+
+/* ---------- bandeja de recibidos ---------- */
+.inbox-head { display: flex; justify-content: space-between; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; }
+.inbox-stats { grid-template-columns: repeat(4, minmax(110px, 1fr)); min-width: min(520px, 100%); }
+.stat.bad span { color: var(--red); }
+.row-bad td { background: rgba(255, 77, 94, .04); }
+#view-solicitudes > .panel + .panel { margin-top: 18px; }
+
+/* ---------- candado de requestId ---------- */
+.lock-toggle { margin-top: 12px; display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px 10px 12px; cursor: pointer;
+  background: rgba(6, 5, 10, .6); border: 1px solid var(--gold); border-radius: 6px; color: var(--text); text-align: left;
+  transition: border-color .3s, box-shadow .3s; }
+.lock-toggle:hover { box-shadow: 0 0 18px rgba(230, 197, 90, .25); }
+.lock-toggle:focus-visible { outline: 2px solid var(--purple-hi); outline-offset: 3px; }
+.lock-icon { width: 30px; height: 36px; flex: none; overflow: visible; }
+.lock-icon .shackle { stroke: var(--gold); transform-origin: 29px 22px; transition: transform .45s cubic-bezier(.3, 1.6, .5, 1), stroke .3s; }
+.lock-icon .body { fill: var(--gold); transition: fill .3s; }
+.lock-icon .hole { fill: #0b0812; }
+.lock-text { display: grid; gap: 2px; }
+.lock-text b { font: 700 12px var(--mono); letter-spacing: 2px; text-transform: uppercase; color: var(--gold); transition: color .3s; }
+.lock-text small { font: 11px var(--mono); color: var(--muted); }
+.lock-toggle.is-open { border-color: var(--green); }
+.lock-toggle.is-open:hover { box-shadow: 0 0 18px rgba(54, 229, 138, .25); }
+.lock-toggle.is-open .shackle { stroke: var(--green); transform: translateY(-7px) rotate(-28deg); }
+.lock-toggle.is-open .body { fill: var(--green); }
+.lock-toggle.is-open .lock-text b { color: var(--green); }
+.lock-toggle.turning .lock-icon { animation: lock-jolt .45s; }
+@keyframes lock-jolt { 30% { transform: rotate(-10deg); } 60% { transform: rotate(7deg); } }
+@media (prefers-reduced-motion: reduce) { .lock-icon .shackle { transition: none; } .lock-toggle.turning .lock-icon { animation: none; } }

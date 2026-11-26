@@ -38,7 +38,7 @@
     <button class="tab is-active" data-view="consola" type="button"><i>01</i>Consola</button>
     <button class="tab" data-view="operar" type="button"><i>02</i>Operar</button>
     <button class="tab" data-view="red" type="button"><i>03</i>Red</button>
-    <button class="tab" data-view="solicitudes" type="button"><i>04</i>Solicitudes <b id="badgeSol" class="badge hidden">0</b></button>
+    <button class="tab" data-view="solicitudes" type="button"><i>04</i>Recibidos <b id="badgeSol" class="badge hidden">0</b></button>
     <button class="tab" data-view="consultas" type="button"><i>05</i>Consultas</button>
     <button class="tab" data-view="v1" type="button"><i>06</i>Modo v1</button>
     <button class="tab" data-view="bitacora" type="button"><i>07</i>Bitácora</button>
@@ -168,15 +168,58 @@
 
     <!-- 04 SOLICITUDES -->
     <section id="view-solicitudes" class="view">
+      <div class="inbox-head panel">
+        <div>
+          <h2 class="ptitle">Bandeja de recibidos</h2>
+          <p class="hint">Los otros nodos te mandan a <b class="gold mono" id="inboxUrl">—</b> (v2.0 y formato anterior).</p>
+          <button class="lock-toggle is-locked" id="lockReq" type="button" aria-pressed="true" title="Clic para abrir o cerrar">
+            <svg class="lock-icon" viewBox="0 0 40 48" aria-hidden="true">
+              <path class="shackle" d="M11 22 V14 a9 9 0 0 1 18 0 V22" fill="none" stroke-width="4" stroke-linecap="round"/>
+              <rect class="body" x="5" y="21" width="30" height="24" rx="4"/>
+              <circle class="hole" cx="20" cy="31" r="3"/><rect class="hole" x="18.6" y="32" width="2.8" height="7" rx="1.2"/>
+            </svg>
+            <span class="lock-text"><b id="lockTitle">requestId obligatorio</b><small id="lockSub">Se rechazan los paquetes sin requestId</small></span>
+          </button>
+        </div>
+        <div class="stats inbox-stats">
+          <div class="stat"><span id="inPending">0</span><small>Pendientes</small></div>
+          <div class="stat"><span id="inAccepted">0</span><small>Aceptados</small></div>
+          <div class="stat bad"><span id="inRefused">0</span><small>Rechazados</small></div>
+          <div class="stat"><span id="inV1">0</span><small>Formato v1</small></div>
+        </div>
+      </div>
       <article class="panel">
-        <h2 class="ptitle">Bandeja · Solicitudes</h2>
+        <h2 class="ptitle">Paquetes v2.0</h2>
         <div class="table-wrap">
           <table class="table">
             <thead><tr><th>Recibido</th><th>Origen</th><th>Paquete</th><th>Algoritmo</th><th>Validación</th><th>Estado</th><th></th></tr></thead>
             <tbody id="solBody"></tbody>
           </table>
         </div>
-        <p class="empty hidden" id="solEmpty">No hay solicitudes.</p>
+        <p class="empty hidden" id="solEmpty">Todavía no llega nada. Pásales tu IP y puerto a los demás equipos.</p>
+      </article>
+      <article class="panel">
+        <h2 class="ptitle">Rechazados <span class="hint">(llegaron pero no pasaron la validación)</span></h2>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Hora</th><th>Desde</th><th>Archivo</th><th>Algoritmo</th><th>Error</th><th>Motivo</th></tr></thead>
+            <tbody id="refBody"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="refEmpty">Ningún paquete rechazado.</p>
+      </article>
+      <article class="panel">
+        <div class="phead">
+          <h2 class="ptitle">Formato anterior (v1)</h2>
+          <button class="btn sm" type="button" id="goV1">Abrir Modo v1</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Recibido</th><th>Desde</th><th>Algoritmo</th><th>Archivo</th><th>Estado</th></tr></thead>
+            <tbody id="inV1Body"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="inV1Empty">No han llegado paquetes v1.</p>
       </article>
     </section>
 

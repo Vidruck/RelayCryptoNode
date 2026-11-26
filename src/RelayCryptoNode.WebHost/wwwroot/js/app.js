@@ -441,8 +441,29 @@ function setupRed() {
 
 // ---------------------------------------------------------------- solicitudes y consultas
 async function loadSolicitudes() {
-  const list = await api("/api/ui/solicitudes");
+  const [list, refused, v1] = await Promise.all([
+    api("/api/ui/solicitudes"),
+    api("/api/ui/rechazados").catch(() => []),
+    api("/api/v1/requests").catch(() => [])
+  ]);
   updateBadge(list);
+  if (state.overview) $("#inboxUrl").textContent = `http://${state.overview.ip}:${state.overview.httpPort}/api/requests/receive`;
+  $("#inPending").textContent = list.filter((s) => s.status === "Pendiente").length;
+  $("#inAccepted").textContent = list.filter((s) => s.status === "Aceptada").length;
+  $("#inRefused").textContent = refused.length;
+  $("#inV1").textContent = v1.length;
+  $("#refBody").innerHTML = refused.map((r) => `<tr class="row-bad">
+    <td>${time(r.receivedUtc)}</td>
+    <td><b class="gold mono">${esc(r.sourceNode || "¿?")}</b><br><span class="muted small">${esc(r.sourceIp)}</span></td>
+    <td class="small">${esc(r.fileName || "—")}</td>
+    <td>${esc(r.algorithmCode || "—")}</td>
+    <td><span class="tag bad">${esc(r.code)}</span></td>
+    <td class="small">${esc(r.reason)}</td></tr>`).join("");
+  $("#refEmpty").classList.toggle("hidden", refused.length > 0);
+  $("#inV1Body").innerHTML = v1.map((r) => `<tr>
+    <td>${time(r.receivedUtc)}</td><td class="mono">${esc(r.sourceNode)}</td><td>${esc(r.algorithmCode)}</td>
+    <td>${esc(r.originalFileName)}</td><td><span class="tag ${r.status === "Pending" ? "warn" : r.status === "Failed" || r.status === "Rejected" ? "bad" : "ok"}">${esc(r.statusLabel)}</span></td></tr>`).join("");
+  $("#inV1Empty").classList.toggle("hidden", v1.length > 0);
   $("#solBody").innerHTML = list.map((s) => `<tr>
     <td>${time(s.createdUtc)}</td>
     <td><b class="gold mono">${esc(s.sourceNode)}</b><br><span class="muted small">${esc(s.sourceIp)}</span></td>
@@ -561,6 +582,35 @@ async function inverseDialog(record) {
       out.innerHTML = esc(err.message);
     }
   });
+}
+
+function renderLock(locked) {
+  const button = $("#lockReq");
+  button.classList.toggle("is-locked", locked);
+  button.classList.toggle("is-open", !locked);
+  button.setAttribute("aria-pressed", String(locked));
+  $("#lockTitle").textContent = locked ? "requestId obligatorio" : "requestId opcional";
+  $("#lockSub").textContent = locked ? "Candado cerrado · se rechazan los paquetes sin requestId" : "Candado abierto · se aceptan aunque no traigan requestId";
+}
+
+async function loadLock() {
+  const r = await api("/api/ui/reception");
+  renderLock(r.requireRequestId);
+}
+
+function setupInbox() {
+  $("#goV1").addEventListener("click", () => goTo("v1"));
+  $("#lockReq").addEventListener("click", async () => {
+    const next = !$("#lockReq").classList.contains("is-locked");
+    $("#lockReq").classList.add("turning");
+    try {
+      const r = await api("/api/ui/reception", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requireRequestId: next }) });
+      renderLock(r.requireRequestId);
+      toast(r.requireRequestId ? "Candado cerrado: requestId obligatorio." : "Candado abierto: requestId opcional.", r.requireRequestId ? "" : "ok");
+    } catch (err) { toast(err.message, "bad"); }
+    setTimeout(() => $("#lockReq").classList.remove("turning"), 500);
+  });
+  loadLock().catch(() => {});
 }
 
 function setupConsultas() {
@@ -694,10 +744,12 @@ function connectStream() {
     const item = JSON.parse(m.data);
     renderEvent(item, true);
     if (/request\.received/.test(item.eventType)) toast(item.message, "ok");
+    if (/package\.refused/.test(item.eventType)) toast(item.message, "bad");
     if (/thumbprint_changed/.test(item.eventType)) toast(item.message, "bad");
     api("/api/ui/solicitudes").then(updateBadge).catch(() => {});
     const active = $(".tab.is-active").dataset.view;
     if (["solicitudes", "consultas", "v1"].includes(active)) refreshView(active);
+    else if (/package\.refused|request\.received/.test(item.eventType)) loadSolicitudes().catch(() => {});
   };
 }
 
@@ -710,6 +762,7 @@ async function init() {
   setupOperar();
   setupRed();
   setupConsultas();
+  setupInbox();
   setupV1();
   $("#modalClose").addEventListener("click", closeModal);
   try {

@@ -45,6 +45,9 @@ public sealed record V2OperationResult(
     byte[]? Recovered,
     JsonObject? Verification);
 
+/// <summary>Paquete que llegó a la bandeja y se rechazó.</summary>
+public sealed record RefusedPacket(DateTimeOffset ReceivedUtc, string SourceIp, string? SourceNode, string? AlgorithmCode, string? FileName, string Code, string Reason, long SizeBytes);
+
 /// <summary>
 /// Lógica del estándar v2.0: receptor, proveedor, solicitante, emisor y directorio.
 /// </summary>
@@ -86,6 +89,35 @@ public sealed class V2NodeService
         }
     }
 
+    private string? _receptionFile;
+
+    /// <summary>Candado de la bandeja: cerrado (true) exige requestId en los paquetes que llegan; abierto (false) no.</summary>
+    public bool RequireRequestId { get; private set; } = true;
+
+    /// <summary>Carga el estado del candado de requestId desde su archivo.</summary>
+    public void LoadReception(string file)
+    {
+        _receptionFile = file;
+        if (File.Exists(file) && bool.TryParse(File.ReadAllText(file).Trim(), out var saved))
+        {
+            RequireRequestId = saved;
+        }
+    }
+
+    /// <summary>Abre o cierra el candado de requestId y lo guarda.</summary>
+    public void SetRequireRequestId(bool value)
+    {
+        RequireRequestId = value;
+        if (_receptionFile is not null)
+        {
+            File.WriteAllText(_receptionFile, value ? "true" : "false");
+        }
+
+        _ = Log("reception.changed", value
+            ? "Candado cerrado: los paquetes deben traer requestId."
+            : "Candado abierto: se aceptan paquetes sin requestId.");
+    }
+
     /// <summary>Cambia el modo (v1, v2 o v3) y lo guarda.</summary>
     public void SetMode(string mode)
     {
@@ -110,6 +142,50 @@ public sealed class V2NodeService
         }
 
         return _mode == "v3" && _v3Providers.TryGetValue(code, out var local) ? local : null;
+    }
+
+    private readonly List<RefusedPacket> _refused = new();
+
+    /// <summary>Últimos paquetes que llegaron y se rechazaron (para la bandeja de recibidos).</summary>
+    public IReadOnlyList<RefusedPacket> Refused
+    {
+        get
+        {
+            lock (_refused)
+            {
+                return _refused.ToList();
+            }
+        }
+    }
+
+    private void AddRefused(byte[] zipBytes, string sourceIp, string code, string reason)
+    {
+        string? node = null, algorithm = null, file = null;
+        try
+        {
+            using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(zipBytes), System.IO.Compression.ZipArchiveMode.Read);
+            var entry = zip.GetEntry("manifest.json");
+            if (entry is not null)
+            {
+                using var stream = entry.Open();
+                var manifest = JsonNode.Parse(stream) as JsonObject;
+                node = (string?)manifest?["sourceNode"];
+                algorithm = (string?)manifest?["algorithmCode"];
+                file = (string?)manifest?["originalFileName"];
+            }
+        }
+        catch (Exception ex) when (ex is InvalidDataException or JsonException or InvalidOperationException)
+        {
+        }
+
+        lock (_refused)
+        {
+            _refused.Insert(0, new RefusedPacket(DateTimeOffset.UtcNow, sourceIp, node, algorithm, file, code, reason, zipBytes.LongLength));
+            if (_refused.Count > 100)
+            {
+                _refused.RemoveAt(_refused.Count - 1);
+            }
+        }
     }
 
     /// <summary>Crea el servicio.</summary>
@@ -346,24 +422,27 @@ public sealed class V2NodeService
         V2Package package;
         try
         {
-            package = V2PackageCodec.Validate(zipBytes);
+            package = V2PackageCodec.Validate(zipBytes, RequireRequestId);
         }
         catch (V2ProtocolException ex)
         {
+            AddRefused(zipBytes, sourceIp, ex.Code, ex.Message);
             await Log("package.refused", $"Paquete rechazado de {sourceIp}: {ex.Code} — {ex.Message}").ConfigureAwait(false);
             throw;
         }
 
         var pinned = _directory.PinnedThumbprint(package.SourceNode);
-        var thumb = package.Str("certificateThumbprintSha256");
+        var thumb = package.Str("certificateThumbprintSha256").ToUpperInvariant();
         if (pinned is not null && pinned != thumb)
         {
+            AddRefused(zipBytes, sourceIp, "E-CERT-UNTRUSTED", "La huella no coincide con la fijada.");
             await Log("package.refused", $"{package.SourceNode} firmó con una huella distinta a la fijada (E-CERT-UNTRUSTED).").ConfigureAwait(false);
             throw new V2ProtocolException("E-CERT-UNTRUSTED", $"La huella de {package.SourceNode} no coincide con la fijada en este nodo.");
         }
 
         if (!_replay.TryRecord("packet", package.PacketId))
         {
+            AddRefused(zipBytes, sourceIp, "E-DUPLICATE", "Ese packetId ya se había recibido.");
             throw new V2ProtocolException("E-DUPLICATE", $"El packetId {package.PacketId} ya se había recibido.");
         }
 
@@ -559,6 +638,13 @@ public sealed class V2NodeService
         string provider;
         var delegated = false;
         var own = LocalProvider(algorithm.Code);
+        if (own is not null && !_providers.ContainsKey(algorithm.Code) && source.ProducerNode != _identity.NodeId
+            && source.PublicParameters.GetValueOrDefault("mode") != "v3-local")
+        {
+            // En v3 solo se invierte local lo que se produjo en modo v3; lo de otro equipo lo invierte su dueño.
+            own = null;
+        }
+
         if (own is not null && (providerNode is null || providerNode == _identity.NodeId))
         {
             var requestId = V2Format.NewUuid();

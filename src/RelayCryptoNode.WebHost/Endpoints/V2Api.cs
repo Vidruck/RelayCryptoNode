@@ -303,6 +303,14 @@ public static class V2Api
         });
 
         ui.MapGet("/solicitudes", (V2NodeService node) => Results.Ok(node.Store.List("solicitud")));
+        ui.MapGet("/rechazados", (V2NodeService node) => Results.Ok(node.Refused));
+        ui.MapGet("/reception", (V2NodeService node) => Results.Ok(new { requireRequestId = node.RequireRequestId }));
+        ui.MapPut("/reception", async (HttpRequest http, V2NodeService node) =>
+        {
+            var body = await System.Text.Json.JsonSerializer.DeserializeAsync<Dictionary<string, bool>>(http.Body) ?? new();
+            node.SetRequireRequestId(body.GetValueOrDefault("requireRequestId", true));
+            return Results.Ok(new { requireRequestId = node.RequireRequestId });
+        });
         ui.MapPost("/solicitudes/{id}/accept", (string id, V2NodeService node) => Results.Ok(node.Accept(id)));
         ui.MapPost("/solicitudes/{id}/reject", (string id, V2NodeService node) => Results.Ok(node.Reject(id)));
 

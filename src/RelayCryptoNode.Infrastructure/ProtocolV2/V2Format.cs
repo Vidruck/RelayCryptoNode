@@ -231,8 +231,8 @@ public static partial class V2Format
     public static bool TryParseTimestamp(string? text, out DateTimeOffset value)
     {
         value = default;
-        return text is not null
-               && TimestampPattern().IsMatch(text)
+        // Se acepta también con fracciones de segundo o con desfase (+00:00): solo importa que sea una fecha válida.
+        return !string.IsNullOrWhiteSpace(text)
                && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out value);
     }
 }

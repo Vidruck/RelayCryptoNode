@@ -6,22 +6,45 @@
   <title>RELAY//CRYPTO · Acceso</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/login.css">
   <script src="js/login.js" type="module"></script>
 </head>
-<body>
+<body class="login-body">
   <canvas id="rain" class="rain" aria-hidden="true"></canvas>
   <div class="scanlines" aria-hidden="true"></div>
+
+  <div class="hud-rings" aria-hidden="true">
+    <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span><span class="ring r4"></span>
+    <span class="sweep"></span>
+  </div>
+
+  <div class="corner tl" aria-hidden="true">SYS://EQ06<br><span id="clock">--:--:--</span></div>
+  <div class="corner tr" aria-hidden="true">CANAL · RSA-PSS-SHA256<br>CC-ENV-1 · AES-256-GCM</div>
+  <div class="corner bl" aria-hidden="true">CENTRO DE CIBERSEGURIDAD<br>UPIICSA · VIROLOGÍA</div>
+  <div class="corner br" aria-hidden="true">NODO <b id="nodeTag">EQ06</b><br><span class="blink">● EN LÍNEA</span></div>
+
   <main class="login-wrap">
-    <article class="panel login-card">
-      <div class="sigil" aria-hidden="true"><span></span><span></span><span></span></div>
-      <h1 class="glitch" data-text="RELAY//CRYPTO">RELAY//CRYPTO</h1>
-      <p class="tagline">Nodo EQ06 · acceso restringido</p>
-      <form class="form" id="loginForm">
-        <label>Usuario<input id="loginUser" autocomplete="username" required autofocus></label>
-        <label>Contraseña<input id="loginPass" type="password" autocomplete="current-password" required></label>
+    <article class="login-card" id="card">
+      <span class="card-scan" aria-hidden="true"></span>
+      <div class="login-top">
+        <div class="sigil big" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <h1 class="glitch" data-text="RELAY//CRYPTO">RELAY//CRYPTO</h1>
+          <p class="tagline">Acceso restringido · solo personal autorizado</p>
+        </div>
+      </div>
+
+      <pre class="boot" id="boot" aria-live="polite"></pre>
+
+      <form class="form login-form" id="loginForm" autocomplete="on">
+        <label>Operador<input id="loginUser" autocomplete="username" spellcheck="false" required></label>
+        <label>Clave de acceso<input id="loginPass" type="password" autocomplete="current-password" required></label>
         <p class="login-error" id="loginError" role="alert"></p>
-        <button class="btn primary" id="loginBtn" type="submit">Entrar</button>
+        <button class="btn primary access-btn" id="loginBtn" type="submit"><span>Autenticar</span></button>
+        <div class="progress" aria-hidden="true"><i id="bar"></i></div>
       </form>
+
+      <div class="verdict" id="verdict" aria-live="assertive"><b id="verdictText">ACCESO CONCEDIDO</b><small id="verdictSub"></small></div>
     </article>
   </main>
 </body>

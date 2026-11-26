@@ -89,6 +89,7 @@ builder.Services.AddSingleton(sp =>
     // Modo v3: los 21 algoritmos se pueden cifrar y descifrar en este nodo.
     service.EnableV3(implemented.Concat(V3LocalProviders.Create(identity, settings.DataDirectory)),
         Path.Combine(settings.DataDirectory, "modo-protocolo.txt"));
+    service.LoadReception(Path.Combine(settings.DataDirectory, "requestid-obligatorio.txt"));
     return service;
 });
 builder.Services.AddSingleton(sp => new DiscoveryService(sp.GetRequiredService<V2NodeService>(), sp.GetRequiredService<ILogger<DiscoveryService>>())
