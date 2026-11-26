@@ -14,7 +14,6 @@ namespace RelayCryptoNode.WebHost.Endpoints;
 /// </summary>
 public static class V2Api
 {
-    private static readonly ConcurrentDictionary<string, DateTimeOffset> LastScan = new();
 
     /// <summary>Registra los endpoints.</summary>
     public static void MapV2Api(this WebApplication app)
@@ -138,7 +137,7 @@ public static class V2Api
 
     private static void MapUi(RouteGroupBuilder ui)
     {
-        ui.MapGet("/overview", (V2NodeService node, NodeRuntimeState legacy) =>
+        ui.MapGet("/overview", (V2NodeService node, NodeRuntimeState legacy, DiscoveryService discovery) =>
         {
             var directory = node.Directory.List();
             return Results.Ok(new
@@ -149,10 +148,13 @@ public static class V2Api
                 httpPort = node.Identity.HttpPort,
                 thumbprint = node.Identity.Thumbprint,
                 provided = node.Providers.Select(p => p.Algorithm.Code),
+                mode = node.Mode,
+                lastScanUtc = discovery.LastScan.At,
+                lastScanFound = discovery.LastScan.Found,
                 legacyRole = legacy.Current.Role.ToString(),
                 catalog = V2Catalog.All.Select(a =>
                 {
-                    var own = node.Providers.Any(p => p.Algorithm.Code == a.Code);
+                    var own = node.LocalProvider(a.Code) is not null;
                     var owner = a.OwnerNode is null ? null : directory.FirstOrDefault(d => d.NodeId == a.OwnerNode);
                     var alternative = directory.Where(d => d.Algorithms.Contains(a.Code) && d.ProtocolVersion == V2Format.Version)
                         .OrderBy(d => d.TeamNumber).FirstOrDefault();
@@ -207,34 +209,19 @@ public static class V2Api
             return Results.Ok(Entry(entry));
         });
 
-        ui.MapPost("/directory/scan", async (V2NodeService node, CancellationToken ct) =>
+        ui.MapPost("/directory/scan", async (DiscoveryService discovery, CancellationToken ct) =>
         {
-            var now = DateTimeOffset.UtcNow;
-            if (LastScan.TryGetValue("scan", out var last) && now - last < TimeSpan.FromSeconds(20))
-            {
-                throw new V2ProtocolException("E-BUSY", "Espera unos segundos antes de volver a escanear.");
-            }
+            var result = await discovery.ScanAsync(ct)
+                         ?? throw new V2ProtocolException("E-BUSY", "Ya hay un escaneo en curso (se hace solo cada 30 s).");
+            return Results.Ok(new { scanned = result.Scanned, found = result.Found.Select(Entry) });
+        });
 
-            LastScan["scan"] = now;
-            var found = new ConcurrentBag<DirectoryEntry>();
-            var networks = DiscoveryService.LocalNetworks();
-            var prefixes = networks.Select(n => string.Join('.', n.Address.ToString().Split('.')[..3])).Distinct().ToList();
-            if (prefixes.Count == 0)
-            {
-                prefixes.Add(string.Join('.', node.Identity.Ip.Split('.')[..3]));
-            }
-
-            var targets = prefixes.SelectMany(prefix => Enumerable.Range(1, 254).SelectMany(host =>
-                Enumerable.Range(5001, 20).Select(port => (Ip: $"{prefix}.{host}", Port: port)))).ToList();
-            await Parallel.ForEachAsync(targets, new ParallelOptions { MaxDegreeOfParallelism = 64, CancellationToken = ct }, async (target, token) =>
-            {
-                var entry = await node.ProbeAsync(target.Ip, target.Port, "scan", TimeSpan.FromMilliseconds(500), token);
-                if (entry is not null)
-                {
-                    found.Add(entry);
-                }
-            });
-            return Results.Ok(new { scanned = targets.Count, found = found.Select(Entry) });
+        ui.MapGet("/mode", (V2NodeService node) => Results.Ok(new { mode = node.Mode }));
+        ui.MapPut("/mode", async (HttpRequest http, V2NodeService node) =>
+        {
+            var body = await System.Text.Json.JsonSerializer.DeserializeAsync<Dictionary<string, string>>(http.Body) ?? new();
+            node.SetMode(body.GetValueOrDefault("mode") ?? string.Empty);
+            return Results.Ok(new { mode = node.Mode });
         });
 
         ui.MapGet("/directory/{nodeId}/inspect", async (string nodeId, V2NodeService node, CancellationToken ct) =>

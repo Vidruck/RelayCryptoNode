@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -72,15 +75,27 @@ builder.Services.AddSingleton(new NodeDirectory(Path.Combine(settings.DataDirect
 builder.Services.AddSingleton(new ReplayGuard(Path.Combine(settings.DataDirectory, "ids-vistos.txt")));
 builder.Services.AddSingleton(new PacketStore(Path.Combine(settings.DataDirectory, "v2")));
 builder.Services.AddHttpClient("v2", client => client.Timeout = TimeSpan.FromSeconds(75));
-builder.Services.AddSingleton(sp => new V2NodeService(
-    identity,
-    provided,
-    sp.GetRequiredService<NodeDirectory>(),
-    sp.GetRequiredService<ReplayGuard>(),
-    sp.GetRequiredService<PacketStore>(),
-    sp.GetRequiredService<IHttpClientFactory>().CreateClient("v2"),
-    sp.GetRequiredService<IRealtimeNotifierPort>()));
-builder.Services.AddSingleton<DiscoveryService>();
+builder.Services.AddSingleton(sp =>
+{
+    var service = new V2NodeService(
+        identity,
+        provided,
+        sp.GetRequiredService<NodeDirectory>(),
+        sp.GetRequiredService<ReplayGuard>(),
+        sp.GetRequiredService<PacketStore>(),
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("v2"),
+        sp.GetRequiredService<IRealtimeNotifierPort>());
+
+    // Modo v3: los 21 algoritmos se pueden cifrar y descifrar en este nodo.
+    service.EnableV3(implemented.Concat(V3LocalProviders.Create(identity, settings.DataDirectory)),
+        Path.Combine(settings.DataDirectory, "modo-protocolo.txt"));
+    return service;
+});
+builder.Services.AddSingleton(sp => new DiscoveryService(sp.GetRequiredService<V2NodeService>(), sp.GetRequiredService<ILogger<DiscoveryService>>())
+{
+    ExtraHosts = (builder.Configuration["Node:ScanHosts"] ?? string.Empty)
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+});
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscoveryService>());
 
 // Formato anterior (v1): los 15 módulos de cifrado y la cadena Initial → Intermediate → Final.
@@ -110,6 +125,21 @@ builder.Services.AddTransient<IRelayAndReEncryptUseCase, RelayAndReEncryptUseCas
 builder.Services.AddTransient<IReceiveAndAuditFinalUseCase, ReceiveAndAuditFinalUseCase>();
 builder.Services.AddTransient<IncomingPackageService>();
 builder.Services.AddTransient<RequestProcessingService>();
+
+// Login del panel: dos superusuarios (Auth:Users en appsettings.json).
+var authEnabled = builder.Configuration.GetValue("Auth:Enabled", true);
+var panelUsers = new PanelUsers(builder.Configuration.GetSection("Auth:Users").Get<PanelUser[]>() ?? []);
+builder.Services.AddSingleton(panelUsers);
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "rcn_sesion";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.ExpireTimeSpan = TimeSpan.FromHours(10);
+        options.SlidingExpiration = true;
+        options.LoginPath = "/login.html";
+    });
 
 var app = builder.Build();
 
@@ -156,6 +186,57 @@ app.Use(async (context, next) =>
         await context.Response.WriteAsJsonAsync(new { error = message });
     }
 });
+
+app.UseAuthentication();
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path.Value ?? "/";
+    var isPanel = path is "/" or "/index.html"
+                  || path.StartsWith("/api/ui", StringComparison.OrdinalIgnoreCase)
+                  || path.StartsWith("/api/v1", StringComparison.OrdinalIgnoreCase);
+    if (authEnabled && isPanel && context.User.Identity?.IsAuthenticated != true)
+    {
+        if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsJsonAsync(new { error = "Inicia sesión en el panel." });
+            return;
+        }
+
+        context.Response.Redirect("/login.html");
+        return;
+    }
+
+    await next();
+});
+
+app.MapPost("/auth/login", async (HttpContext context, PanelUsers users) =>
+{
+    var body = await System.Text.Json.JsonSerializer.DeserializeAsync<Dictionary<string, string>>(context.Request.Body) ?? new();
+    var user = users.Check(body.GetValueOrDefault("user"), body.GetValueOrDefault("password"));
+    if (user is null)
+    {
+        await Task.Delay(600);
+        return Results.Json(new { error = "Usuario o contraseña incorrectos." }, statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    var principal = new ClaimsPrincipal(new ClaimsIdentity(
+        [new Claim(ClaimTypes.Name, user.User), new Claim("display", user.Name)],
+        CookieAuthenticationDefaults.AuthenticationScheme));
+    await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+    app.Logger.LogInformation("Sesión iniciada en el panel: {User}", user.User);
+    return Results.Ok(new { user = user.User, name = user.Name });
+});
+
+app.MapPost("/auth/logout", async (HttpContext context) =>
+{
+    await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok(new { ok = true });
+});
+
+app.MapGet("/auth/me", (HttpContext context) => context.User.Identity?.IsAuthenticated == true
+    ? Results.Ok(new { user = context.User.Identity.Name, name = context.User.FindFirst("display")?.Value, enabled = authEnabled })
+    : Results.Ok(new { user = (string?)null, name = authEnabled ? null : "Operador", enabled = authEnabled }));
 
 app.UseDefaultFiles();
 app.UseStaticFiles();

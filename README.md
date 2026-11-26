@@ -97,6 +97,21 @@ curl http://localhost:5006/api/status
 }
 ```
 
+### Acceso, versiones y escaneo
+
+- **Login:** el panel pide usuario y contraseña. Hay dos superusuarios en `Auth:Users` de `appsettings.json`:
+  `gatica` y `tellez` (contraseñas con hash PBKDF2-SHA256). Para cambiar una contraseña se reemplaza su `PasswordHash`.
+  El login solo protege el panel (`/`, `/api/ui`, `/api/v1`); lo que usan los otros nodos (`/api/status`,
+  `/api/certificate`, `/api/algorithms`, `/api/requests/receive`, `/api/crypto/*`) sigue abierto.
+- **Versiones** (selector arriba a la derecha):
+  - **v1:** formato anterior (NODO04), en la pestaña *Modo v1*.
+  - **v2:** estándar: el EQ06 ejecuta el 11 y el 12 y los demás se le piden al equipo dueño.
+  - **v3:** los **21 algoritmos** se cifran y descifran en este nodo. Los paquetes siguen siendo v2.0 válidos
+    (misma firma y manifiesto). Si no se escribe clave, el nodo genera una y la guarda en `datos/v3/llaves.json`
+    para poder invertir después sin volver a escribirla.
+- **Escaneo automático:** cada 30 s el nodo revisa la subred de su tarjeta de red (hasta un bloque /22) en los puertos
+  5000 a 5020, además de los anuncios UDP 5099. `Node:ScanHosts` agrega IPs fijas a revisar (separadas por coma).
+
 ### Panel (interfaz)
 
 | Pestaña | Qué hace |

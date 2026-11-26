@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RELAY//CRYPTO · Acceso</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="js/login.js" type="module"></script>
+</head>
+<body>
+  <canvas id="rain" class="rain" aria-hidden="true"></canvas>
+  <div class="scanlines" aria-hidden="true"></div>
+  <main class="login-wrap">
+    <article class="panel login-card">
+      <div class="sigil" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h1 class="glitch" data-text="RELAY//CRYPTO">RELAY//CRYPTO</h1>
+      <p class="tagline">Nodo EQ06 · acceso restringido</p>
+      <form class="form" id="loginForm">
+        <label>Usuario<input id="loginUser" autocomplete="username" required autofocus></label>
+        <label>Contraseña<input id="loginPass" type="password" autocomplete="current-password" required></label>
+        <p class="login-error" id="loginError" role="alert"></p>
+        <button class="btn primary" id="loginBtn" type="submit">Entrar</button>
+      </form>
+    </article>
+  </main>
+</body>
+</html>

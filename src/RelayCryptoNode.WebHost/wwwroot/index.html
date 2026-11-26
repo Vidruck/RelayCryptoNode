@@ -17,8 +17,16 @@
       <div class="sigil" aria-hidden="true"><span></span><span></span><span></span></div>
       <div>
         <h1 class="glitch" data-text="RELAY//CRYPTO">RELAY//CRYPTO</h1>
-        <p class="tagline">Centro de Ciberseguridad · protocolo <b>v2.0</b> + compatibilidad v1</p>
+        <p class="tagline">Centro de Ciberseguridad · protocolo <b id="hdrProto">v2.0</b> · v1 · v3</p>
       </div>
+    </div>
+    <div class="hud-controls">
+      <div class="seg mode-seg" role="radiogroup" aria-label="Versión del protocolo">
+        <label title="Formato anterior (NODO04)"><input type="radio" name="protoMode" value="v1"><span>v1</span></label>
+        <label title="Estándar: cada algoritmo lo ejecuta su equipo dueño"><input type="radio" name="protoMode" value="v2" checked><span>v2</span></label>
+        <label title="Los 21 algoritmos se cifran y descifran en este nodo"><input type="radio" name="protoMode" value="v3"><span>v3</span></label>
+      </div>
+      <div class="user-box"><span id="hdrUser">—</span><button class="btn sm" id="btnLogout" type="button">Salir</button></div>
     </div>
     <div class="ident">
       <div class="ident-id" id="hdrNode">EQ--</div>
@@ -87,6 +95,7 @@
 
     <!-- 02 OPERAR -->
     <section id="view-operar" class="view">
+      <p class="mode-banner" id="modeBanner"></p>
       <div class="grid-2">
         <article class="panel">
           <h2 class="ptitle">Operación forward</h2>
@@ -152,7 +161,8 @@
             <tbody id="dirBody"></tbody>
           </table>
         </div>
-        <p class="empty hidden" id="dirEmpty">Aún no hay nodos. Espera un anuncio UDP, escanea o da de alta uno manual.</p>
+        <p class="hint" id="scanInfo">Escaneo automático cada 30 s.</p>
+        <p class="empty hidden" id="dirEmpty">Aún no hay nodos. El escaneo automático corre cada 30 s; también puedes darlo de alta a mano.</p>
       </article>
     </section>
 

@@ -54,12 +54,63 @@ public sealed class V2NodeService
 
     private readonly V2Identity _identity;
     private readonly Dictionary<string, IV2AlgorithmProvider> _providers;
+    private readonly Dictionary<string, IV2AlgorithmProvider> _v3Providers = new(StringComparer.Ordinal);
+    private string? _modeFile;
+    private string _mode = "v2";
     private readonly NodeDirectory _directory;
     private readonly ReplayGuard _replay;
     private readonly PacketStore _store;
     private readonly HttpClient _http;
     private readonly IRealtimeNotifierPort _notifier;
     private readonly SemaphoreSlim _cryptoSlots = new(10, 10);
+
+    /// <summary>Modo del panel: v1 (formato anterior), v2 (estándar: cada algoritmo con su dueño) o v3 (los 21 locales).</summary>
+    public string Mode => _mode;
+
+    /// <summary>Registra los proveedores locales del modo v3 y el archivo donde se guarda el modo elegido.</summary>
+    public void EnableV3(IEnumerable<IV2AlgorithmProvider> providers, string modeFile)
+    {
+        foreach (var provider in providers)
+        {
+            _v3Providers[provider.Algorithm.Code] = provider;
+        }
+
+        _modeFile = modeFile;
+        if (File.Exists(modeFile))
+        {
+            var saved = File.ReadAllText(modeFile).Trim();
+            if (saved is "v1" or "v2" or "v3")
+            {
+                _mode = saved;
+            }
+        }
+    }
+
+    /// <summary>Cambia el modo (v1, v2 o v3) y lo guarda.</summary>
+    public void SetMode(string mode)
+    {
+        if (mode is not ("v1" or "v2" or "v3"))
+        {
+            throw new V2ProtocolException("E-REQUEST", "El modo debe ser v1, v2 o v3.");
+        }
+
+        _mode = mode;
+        if (_modeFile is not null)
+        {
+            File.WriteAllText(_modeFile, mode);
+        }
+    }
+
+    /// <summary>Proveedor que ejecuta el algoritmo en este nodo: los propios siempre; en v3, los 21.</summary>
+    public IV2AlgorithmProvider? LocalProvider(string code)
+    {
+        if (_providers.TryGetValue(code, out var own))
+        {
+            return own;
+        }
+
+        return _mode == "v3" && _v3Providers.TryGetValue(code, out var local) ? local : null;
+    }
 
     /// <summary>Crea el servicio.</summary>
     public V2NodeService(
@@ -217,12 +268,17 @@ public sealed class V2NodeService
 
             var nodeId = (string?)status["nodeId"] ?? string.Empty;
             var version = (string?)status["protocolVersion"] ?? "1.0";
-            if (nodeId == _identity.NodeId && port == _identity.HttpPort)
+            if (nodeId == _identity.NodeId)
             {
                 return null;
             }
 
             var isV2 = version == V2Format.Version && V2Format.NodeIdPattern().IsMatch(nodeId);
+            if (isV2 && status["httpPort"] is JsonValue declared && declared.TryGetValue<int>(out var declaredPort) && declaredPort != port)
+            {
+                // Un nodo v2.0 que también escucha en otro puerto (por ejemplo el 5000 de compatibilidad) se registra solo con el suyo.
+                return null;
+            }
             var thumb = (string?)status["certificateThumbprintSha256"] ?? (string?)status["certificateThumbprint"];
             var algorithms = status["algorithms"] is JsonArray list
                 ? list.Select(a => a is JsonObject o ? (string?)o["algorithmCode"] : (string?)a).Where(a => a is not null).Select(a => a!).ToList()
@@ -455,7 +511,8 @@ public sealed class V2NodeService
         V2Package package;
         string provider;
         var delegated = false;
-        if (_providers.TryGetValue(algorithm.Code, out var own) && (providerNode is null || providerNode == _identity.NodeId))
+        var own = LocalProvider(algorithm.Code);
+        if (own is not null && (providerNode is null || providerNode == _identity.NodeId))
         {
             var output = own.Forward(new V2ForwardInput(payload, cover, payloadMode, fileName, options, secrets));
             package = V2PackageCodec.Build(new V2PackageSpec
@@ -481,7 +538,7 @@ public sealed class V2NodeService
         }
 
         var record = _store.Add(package, "consulta", "Generado");
-        record.Note = delegated ? $"Producido por {provider} (delegado)" : "Producido localmente";
+        record.Note = delegated ? $"Producido por {provider} (delegado)" : _providers.ContainsKey(algorithm.Code) ? "Producido localmente" : "Producido localmente (modo v3)";
         _store.Save(record);
         await Log("operate.forward", $"{algorithm.Code} {algorithm.ForwardName} de {fileName} por {provider}: {package.FileName}.").ConfigureAwait(false);
         return new V2OperationResult(record, package, delegated, provider, null, null);
@@ -501,7 +558,8 @@ public sealed class V2NodeService
         V2Package result;
         string provider;
         var delegated = false;
-        if (_providers.TryGetValue(algorithm.Code, out var own) && (providerNode is null || providerNode == _identity.NodeId))
+        var own = LocalProvider(algorithm.Code);
+        if (own is not null && (providerNode is null || providerNode == _identity.NodeId))
         {
             var requestId = V2Format.NewUuid();
             var inverse = own.Inverse(source.Data, source.PublicParameters, secrets);

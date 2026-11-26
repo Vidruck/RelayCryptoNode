@@ -48,6 +48,10 @@ const AVAIL = {
 // ---------------------------------------------------------------- utilidades
 async function api(url, options = {}) {
   const response = await fetch(url, options);
+  if (response.status === 401) {
+    location.replace("/login.html");
+    throw new Error("Sesión terminada.");
+  }
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = text; }
@@ -136,6 +140,10 @@ async function loadOverview() {
   const [overview, directory] = await Promise.all([api("/api/ui/overview"), api("/api/ui/directory")]);
   state.overview = overview;
   state.directory = directory;
+  applyMode(overview.mode);
+  if (overview.lastScanUtc) {
+    $("#scanInfo").textContent = `Escaneo automático cada 30 s · último: ${new Date(overview.lastScanUtc).toLocaleTimeString("es-MX")} · ${overview.lastScanFound} nodo(s) respondieron.`;
+  }
   $("#hdrNode").textContent = overview.nodeId;
   $("#hdrAddr").textContent = `${overview.ip}:${overview.httpPort}`;
   $("#idNode").textContent = overview.nodeId;
@@ -181,6 +189,45 @@ function drawRadar() {
   $("#radarInfo").textContent = nodes.length
     ? `${nodes.filter((n) => n.status === "online").length} en línea · ${nodes.filter((n) => n.trusted).length} confirmados`
     : "Sin nodos todavía. Anuncio cada 30 s por UDP 5099.";
+}
+
+// ---------------------------------------------------------------- versión (v1 / v2 / v3)
+const MODE_TEXT = {
+  v1: "<b>v1</b> · formato anterior (NODO04). Usa la pestaña <b>Modo v1</b> para emitir; aquí se sigue usando el estándar.",
+  v2: "<b>v2</b> · estándar: los algoritmos del EQ06 (11 y 12) se ejecutan aquí y los demás se le piden a su equipo dueño.",
+  v3: "<b>v3</b> · los <b>21 algoritmos</b> se cifran y descifran en este nodo. Los paquetes siguen siendo v2.0 válidos."
+};
+
+function applyMode(mode) {
+  state.mode = mode || "v2";
+  $$("input[name=protoMode]").forEach((r) => { r.checked = r.value === state.mode; });
+  $("#hdrProto").textContent = state.mode === "v3" ? "v3 · 21 locales" : state.mode === "v1" ? "v1 (NODO04)" : "v2.0";
+  $("#modeBanner").innerHTML = MODE_TEXT[state.mode];
+  $("#modeBanner").className = `mode-banner ${state.mode}`;
+}
+
+function setupMode() {
+  $$("input[name=protoMode]").forEach((r) => r.addEventListener("change", async () => {
+    try {
+      const result = await api("/api/ui/mode", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: r.value }) });
+      applyMode(result.mode);
+      toast(`Modo ${result.mode.toUpperCase()} activo.`, "ok");
+      state.profiles = {};
+      await loadOverview();
+      if (result.mode === "v1") goTo("v1");
+      else selectAlgo($("#fwdAlgo").value);
+    } catch (err) { toast(err.message, "bad"); }
+  }));
+}
+
+async function setupUser() {
+  const me = await fetch("/auth/me").then((r) => r.json()).catch(() => ({}));
+  $("#hdrUser").textContent = me.name || me.user || "—";
+  $("#btnLogout").classList.toggle("hidden", me.enabled === false);
+  $("#btnLogout").addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    location.replace("/login.html");
+  });
 }
 
 // ---------------------------------------------------------------- operar
@@ -378,6 +425,7 @@ function setupRed() {
     try {
       const r = await busy(e.target, () => api("/api/ui/directory/scan", { method: "POST" }));
       toast(`Escaneo: ${r.found.length} nodo(s) en ${r.scanned} direcciones.`, "ok");
+      loadOverview().catch(() => {});
       loadDirectory();
     } catch (err) { toast(err.message, "bad"); }
   });
@@ -657,6 +705,8 @@ function connectStream() {
 async function init() {
   rain();
   setupTabs();
+  setupMode();
+  setupUser();
   setupOperar();
   setupRed();
   setupConsultas();
@@ -673,7 +723,7 @@ async function init() {
   setInterval(() => {
     const active = $(".tab.is-active").dataset.view;
     if (active === "consola") loadOverview().catch(() => {});
-    if (active === "red") loadDirectory().catch(() => {});
+    if (active === "red") { loadDirectory().catch(() => {}); loadOverview().catch(() => {}); }
   }, 10000);
 }
 
