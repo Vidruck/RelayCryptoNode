@@ -246,10 +246,22 @@ public sealed class ZipPackageSerializer : IPackageSerializerPort
             ["originalSizeBytes"] = envelope.OriginalSizeBytes,
             ["encryptedSha256"] = envelope.EncryptedSha256.HexHash,
             ["publicParameters"] = publicParameters,
+            ["publicParametersSha256"] = CanonicalParametersSha256(publicParameters),
             ["certificateThumbprintSha256"] = UpperThumbprint(envelope.SenderCertificatePem),
             ["keyExchangeAlgorithm"] = envelope.KeyExchangeAlgorithm.ToString(),
             ["signatureAlgorithm"] = SignatureName(envelope.SignatureAlgorithm)
         };
+    }
+
+    /// <summary>Hash canónico de la sección 8.5 del estándar v2.0 (llaves en orden ordinal, líneas llave=valor con LF).</summary>
+    private static string CanonicalParametersSha256(JsonObject parameters)
+    {
+        var lines = parameters
+            .Select(static p => (p.Key, Value: p.Value is JsonValue v && v.TryGetValue<string>(out var text) ? text : p.Value?.ToJsonString() ?? string.Empty))
+            .OrderBy(static p => p.Key, StringComparer.Ordinal)
+            .Select(static p => p.Key + "=" + p.Value);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(string.Join("\n", lines));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
     }
 
     private CryptoEnvelope ReadFlatManifest(JsonObject manifest, byte[] data, string certificatePem)
