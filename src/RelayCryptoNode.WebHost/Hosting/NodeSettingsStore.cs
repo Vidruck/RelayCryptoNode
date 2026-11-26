@@ -103,28 +103,47 @@ public sealed class NodeSettingsStore
     }
 
     /// <summary>
-    /// Busca la IPv4 de la red local (prefiere 192.168.x.x y 10.x.x.x).
+    /// Busca la IPv4 de la red local. Prefiere la tarjeta que tiene puerta de enlace (Wi-Fi o Ethernet real)
+    /// y descarta adaptadores virtuales (VirtualBox, VMware, Hyper-V, WSL).
     /// </summary>
     public static string DetectLanAddress()
     {
         try
         {
             var candidates = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-                .SelectMany(n => n.GetIPProperties().UnicastAddresses)
-                .Select(a => a.Address)
-                .Where(a => a.AddressFamily == AddressFamily.InterNetwork)
-                .Select(a => a.ToString())
+                .Where(n => n.OperationalStatus == OperationalStatus.Up
+                            && n.NetworkInterfaceType != NetworkInterfaceType.Loopback
+                            && !IsVirtual(n))
+                .Select(n => new
+                {
+                    Properties = n.GetIPProperties(),
+                    Interface = n
+                })
+                .Select(n => new
+                {
+                    HasGateway = n.Properties.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork
+                                                                       && !g.Address.Equals(System.Net.IPAddress.Any)),
+                    Addresses = n.Properties.UnicastAddresses
+                        .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork)
+                        .Select(a => a.Address.ToString())
+                        .ToList()
+                })
+                .OrderByDescending(n => n.HasGateway)
+                .SelectMany(n => n.Addresses)
                 .ToList();
-            return candidates.FirstOrDefault(a => a.StartsWith("192.168.", StringComparison.Ordinal))
-                   ?? candidates.FirstOrDefault(a => a.StartsWith("10.", StringComparison.Ordinal))
-                   ?? candidates.FirstOrDefault()
-                   ?? "127.0.0.1";
+            return candidates.FirstOrDefault() ?? "127.0.0.1";
         }
         catch (NetworkInformationException)
         {
             return "127.0.0.1";
         }
+    }
+
+    private static bool IsVirtual(NetworkInterface networkInterface)
+    {
+        var text = (networkInterface.Name + " " + networkInterface.Description).ToLowerInvariant();
+        return new[] { "virtualbox", "vmware", "hyper-v", "vethernet", "wsl", "virtual", "docker", "loopback" }
+            .Any(text.Contains);
     }
 
     private SavedSettings? ReadSaved()
