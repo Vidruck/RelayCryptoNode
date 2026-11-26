@@ -46,3 +46,6 @@ appsettings.*.local.json
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Datos del nodo en ejecución (certificados, bandeja, evidencias)
+datos/

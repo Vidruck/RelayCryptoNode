@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RelayCryptoNode</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="js/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">RC</span>
+      <div>
+        <h1>RelayCryptoNode</h1>
+        <p class="sub"><span id="hdrNode">—</span> · <span id="hdrEndpoint">—</span></p>
+      </div>
+    </div>
+    <div class="status">
+      <span id="hdrRole" class="pill">—</span>
+      <span id="hdrLive" class="dot" title="Conexión en vivo"></span>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Secciones">
+    <button class="tab is-active" data-view="nodo" type="button">Nodo</button>
+    <button class="tab" data-view="enviar" type="button">Enviar</button>
+    <button class="tab" data-view="bandeja" type="button">Bandeja <span id="pendingCount" class="count hidden">0</span></button>
+    <button class="tab" data-view="bitacora" type="button">Bitácora</button>
+  </nav>
+
+  <main>
+    <section id="view-nodo" class="view is-active">
+      <div class="grid">
+        <article class="card">
+          <h2>Rol y cadena</h2>
+          <form id="configForm" class="form">
+            <fieldset class="roles">
+              <legend>Rol del nodo</legend>
+              <label class="role"><input type="radio" name="role" value="Initial"><span><b>Initial</b> Empaqueta, cifra y envía</span></label>
+              <label class="role"><input type="radio" name="role" value="Intermediate"><span><b>Intermediate</b> Descifra en RAM, re-cifra y reenvía</span></label>
+              <label class="role"><input type="radio" name="role" value="Final"><span><b>Final</b> Descifra y audita bit a bit</span></label>
+            </fieldset>
+            <label>Siguiente nodo (IP:puerto)
+              <input id="cfgNext" name="nextNodeEndpoint" placeholder="192.168.1.20:5000" autocomplete="off">
+            </label>
+            <div class="row">
+              <label>Algoritmo de salida
+                <select id="cfgAlgorithm" name="outgoingAlgorithmCode"></select>
+              </label>
+              <label>Clave de sesión
+                <select id="cfgKeyExchange" name="keyExchange">
+                  <option value="RsaOaepSha256">RSA-OAEP (certificado del destino)</option>
+                  <option value="PreSharedKey">PSK del grupo</option>
+                </select>
+              </label>
+            </div>
+            <label class="check"><input type="checkbox" id="cfgShared" name="sharedKeyFormat"> Salida en formato de clave compartida (compatible con NODO04, solo AES-GCM)</label>
+            <label class="check"><input type="checkbox" id="cfgAuto" name="autoProcess"> Aceptar y procesar automáticamente los paquetes válidos</label>
+            <div class="row">
+              <label>PSK del grupo
+                <input id="cfgPsk" type="password" placeholder="sin cambios" autocomplete="new-password">
+              </label>
+              <label>Clave AES compartida
+                <input id="cfgAesKey" autocomplete="off">
+              </label>
+            </div>
+            <div class="actions">
+              <button class="btn primary" type="submit">Guardar</button>
+              <span id="cfgMsg" class="hint"></span>
+            </div>
+          </form>
+        </article>
+
+        <article class="card">
+          <h2>Este nodo</h2>
+          <dl class="facts">
+            <dt>Identificador</dt><dd id="facNode">—</dd>
+            <dt>Dirección</dt><dd id="facEndpoint">—</dd>
+            <dt>Huella del certificado</dt><dd id="facThumb" class="mono small">—</dd>
+            <dt>PSK configurada</dt><dd id="facPsk">—</dd>
+          </dl>
+          <div class="actions">
+            <a class="btn" href="/api/certificate" download="certificado.pem">Descargar certificado</a>
+          </div>
+          <h3>Probar otro nodo</h3>
+          <form id="pingForm" class="inline">
+            <input id="pingUrl" placeholder="192.168.1.20:5000" autocomplete="off">
+            <button class="btn" type="submit">Probar</button>
+          </form>
+          <pre id="pingOut" class="out hidden"></pre>
+        </article>
+      </div>
+    </section>
+
+    <section id="view-enviar" class="view">
+      <article class="card narrow">
+        <h2>Enviar paquete</h2>
+        <form id="emitForm" class="form">
+          <label>Destino (IP:puerto)
+            <input name="destination" id="emitDest" placeholder="192.168.1.20:5000" autocomplete="off" required>
+          </label>
+          <div class="row">
+            <label>Algoritmo
+              <select name="algorithm" id="emitAlgorithm"></select>
+            </label>
+            <label>Clave de sesión
+              <select name="keyExchange" id="emitKey">
+                <option value="RsaOaepSha256">RSA-OAEP (certificado del destino)</option>
+                <option value="PreSharedKey">PSK del grupo</option>
+                <option value="SharedKey">Clave compartida (NODO04, AES-GCM)</option>
+              </select>
+            </label>
+          </div>
+          <label>Archivos
+            <input type="file" name="files" id="emitFiles" multiple>
+          </label>
+          <label>O un mensaje de texto
+            <textarea name="text" id="emitText" rows="4" placeholder="Escribe el mensaje…"></textarea>
+          </label>
+          <div class="actions">
+            <button class="btn primary" type="submit" id="emitBtn">Cifrar y enviar</button>
+            <span id="emitMsg" class="hint"></span>
+          </div>
+        </form>
+        <div id="emitResult" class="result hidden"></div>
+      </article>
+    </section>
+
+    <section id="view-bandeja" class="view">
+      <article class="card">
+        <div class="card-head">
+          <h2>Bandeja de solicitudes</h2>
+          <select id="inboxFilter" aria-label="Filtrar por estado">
+            <option value="">Todas</option>
+            <option value="Pending">Pendientes</option>
+            <option value="Relayed">Reenviadas</option>
+            <option value="Audited">Auditadas</option>
+            <option value="Rejected">Rechazadas</option>
+            <option value="Failed">Fallidas</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Recibido</th><th>Origen</th><th>Algoritmo</th><th>Archivo</th><th>Estado</th><th></th></tr>
+            </thead>
+            <tbody id="inboxBody"></tbody>
+          </table>
+        </div>
+        <p id="inboxEmpty" class="empty hidden">No hay solicitudes.</p>
+      </article>
+      <article id="detail" class="card hidden"></article>
+    </section>
+
+    <section id="view-bitacora" class="view">
+      <article class="card">
+        <h2>Bitácora en vivo</h2>
+        <ul id="logList" class="log"></ul>
+      </article>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
