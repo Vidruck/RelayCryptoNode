@@ -3,164 +3,272 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RelayCryptoNode</title>
+  <title>RELAY//CRYPTO · Nodo</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="css/app.css">
   <script src="js/app.js" type="module"></script>
 </head>
 <body>
-  <header class="topbar">
+  <canvas id="rain" class="rain" aria-hidden="true"></canvas>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="hud">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">RC</span>
+      <div class="sigil" aria-hidden="true"><span></span><span></span><span></span></div>
       <div>
-        <h1>RelayCryptoNode</h1>
-        <p class="sub"><span id="hdrNode">—</span> · <span id="hdrEndpoint">—</span></p>
+        <h1 class="glitch" data-text="RELAY//CRYPTO">RELAY//CRYPTO</h1>
+        <p class="tagline">Centro de Ciberseguridad · protocolo <b>v2.0</b> + compatibilidad v1</p>
       </div>
     </div>
-    <div class="status">
-      <span id="hdrRole" class="pill">—</span>
-      <span id="hdrLive" class="dot" title="Conexión en vivo"></span>
+    <div class="ident">
+      <div class="ident-id" id="hdrNode">EQ--</div>
+      <div class="ident-meta"><span id="hdrAddr">—</span><span class="live" id="hdrLive">EN VIVO</span></div>
     </div>
   </header>
 
   <nav class="tabs" aria-label="Secciones">
-    <button class="tab is-active" data-view="nodo" type="button">Nodo</button>
-    <button class="tab" data-view="enviar" type="button">Enviar</button>
-    <button class="tab" data-view="bandeja" type="button">Bandeja <span id="pendingCount" class="count hidden">0</span></button>
-    <button class="tab" data-view="bitacora" type="button">Bitácora</button>
+    <button class="tab is-active" data-view="consola" type="button"><i>01</i>Consola</button>
+    <button class="tab" data-view="operar" type="button"><i>02</i>Operar</button>
+    <button class="tab" data-view="red" type="button"><i>03</i>Red</button>
+    <button class="tab" data-view="solicitudes" type="button"><i>04</i>Solicitudes <b id="badgeSol" class="badge hidden">0</b></button>
+    <button class="tab" data-view="consultas" type="button"><i>05</i>Consultas</button>
+    <button class="tab" data-view="v1" type="button"><i>06</i>Modo v1</button>
+    <button class="tab" data-view="bitacora" type="button"><i>07</i>Bitácora</button>
   </nav>
 
   <main>
-    <section id="view-nodo" class="view is-active">
-      <div class="grid">
-        <article class="card">
-          <h2>Rol y cadena</h2>
-          <form id="configForm" class="form">
-            <fieldset class="roles">
-              <legend>Rol del nodo</legend>
-              <label class="role"><input type="radio" name="role" value="Initial"><span><b>Initial</b> Empaqueta, cifra y envía</span></label>
-              <label class="role"><input type="radio" name="role" value="Intermediate"><span><b>Intermediate</b> Descifra en RAM, re-cifra y reenvía</span></label>
-              <label class="role"><input type="radio" name="role" value="Final"><span><b>Final</b> Descifra y audita bit a bit</span></label>
-            </fieldset>
-            <label>Siguiente nodo (IP:puerto)
-              <input id="cfgNext" name="nextNodeEndpoint" placeholder="192.168.1.20:5000" autocomplete="off">
+    <!-- 01 CONSOLA -->
+    <section id="view-consola" class="view is-active">
+      <div class="grid-3">
+        <article class="panel">
+          <h2 class="ptitle">Identidad del nodo</h2>
+          <dl class="kv">
+            <dt>nodeId</dt><dd id="idNode" class="gold mono big">—</dd>
+            <dt>Equipo</dt><dd id="idTeam">—</dd>
+            <dt>Dirección</dt><dd id="idAddr" class="mono">—</dd>
+            <dt>Huella</dt><dd id="idThumb" class="mono tiny">—</dd>
+            <dt>Algoritmos propios</dt><dd id="idAlgos">—</dd>
+          </dl>
+          <div class="row-actions">
+            <a class="btn" href="/api/certificate" download="certificado.pem">Certificado</a>
+            <button class="btn" id="btnAnnounce" type="button">Anunciarme</button>
+          </div>
+        </article>
+        <article class="panel radar-panel">
+          <h2 class="ptitle">Radar LAN · UDP 5099</h2>
+          <div class="radar" id="radar">
+            <div class="sweep"></div>
+            <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+            <div class="center" id="radarSelf">EQ--</div>
+          </div>
+          <p class="muted small" id="radarInfo">Buscando nodos…</p>
+        </article>
+        <article class="panel">
+          <h2 class="ptitle">Estado</h2>
+          <div class="stats">
+            <div class="stat"><span id="stNodes">0</span><small>nodos vistos</small></div>
+            <div class="stat"><span id="stTrusted">0</span><small>confirmados</small></div>
+            <div class="stat warn"><span id="stPending">0</span><small>solicitudes</small></div>
+            <div class="stat"><span id="stConsultas">0</span><small>consultas</small></div>
+          </div>
+          <h3 class="sub">Últimos eventos</h3>
+          <ul class="mini-log" id="miniLog"></ul>
+        </article>
+      </div>
+      <article class="panel">
+        <h2 class="ptitle">Matriz de algoritmos · tabla 4.1</h2>
+        <div class="legend">
+          <span class="tag local">propio</span><span class="tag ok">disponible</span><span class="tag warn">sin confirmar</span>
+          <span class="tag off">fuera de línea</span><span class="tag bad">sin nodo / huella cambió</span>
+        </div>
+        <div class="algo-grid" id="algoGrid"></div>
+      </article>
+    </section>
+
+    <!-- 02 OPERAR -->
+    <section id="view-operar" class="view">
+      <div class="grid-2">
+        <article class="panel">
+          <h2 class="ptitle">Operación forward</h2>
+          <form id="fwdForm" class="form">
+            <label>Algoritmo
+              <select id="fwdAlgo" name="algorithmCode"></select>
             </label>
-            <div class="row">
-              <label>Algoritmo de salida
-                <select id="cfgAlgorithm" name="outgoingAlgorithmCode"></select>
-              </label>
-              <label>Clave de sesión
-                <select id="cfgKeyExchange" name="keyExchange">
-                  <option value="RsaOaepSha256">RSA-OAEP (certificado del destino)</option>
-                  <option value="PreSharedKey">PSK del grupo</option>
-                </select>
-              </label>
+            <p class="hint" id="fwdOwner">—</p>
+            <div class="seg" role="radiogroup" aria-label="Tipo de entrada">
+              <label><input type="radio" name="inputKind" value="text" checked><span>Texto</span></label>
+              <label><input type="radio" name="inputKind" value="file"><span>Archivo / imagen</span></label>
             </div>
-            <label class="check"><input type="checkbox" id="cfgShared" name="sharedKeyFormat"> Salida en formato de clave compartida (compatible con NODO04, solo AES-GCM)</label>
-            <label class="check"><input type="checkbox" id="cfgAuto" name="autoProcess"> Aceptar y procesar automáticamente los paquetes válidos</label>
-            <div class="row">
-              <label>PSK del grupo
-                <input id="cfgPsk" type="password" placeholder="sin cambios" autocomplete="new-password">
+            <label id="fwdTextWrap">Mensaje
+              <textarea id="fwdText" rows="4" placeholder="Escribe el mensaje a procesar…"></textarea>
+            </label>
+            <label id="fwdFileWrap" class="hidden">Archivo
+              <input type="file" id="fwdFile">
+            </label>
+            <div id="coverWrap" class="hidden">
+              <label>Imagen portadora (PNG o BMP)
+                <input type="file" id="fwdCover" accept=".png,.bmp,image/png,image/bmp">
               </label>
-              <label>Clave AES compartida
-                <input id="cfgAesKey" autocomplete="off">
-              </label>
+              <label class="check"><input type="checkbox" id="fwdAutoCover" checked> Generar portadora automática si no eliges una</label>
             </div>
-            <div class="actions">
-              <button class="btn primary" type="submit">Guardar</button>
-              <span id="cfgMsg" class="hint"></span>
+            <fieldset class="params">
+              <legend>Parámetros públicos</legend>
+              <div id="fwdOptions"></div>
+            </fieldset>
+            <fieldset class="params secret">
+              <legend>Secretos <small>(viajan en sobre CC-ENV-1)</small></legend>
+              <div id="fwdSecrets"></div>
+            </fieldset>
+            <div class="row-actions">
+              <button class="btn primary" type="submit" id="fwdBtn">Ejecutar forward</button>
             </div>
           </form>
         </article>
-
-        <article class="card">
-          <h2>Este nodo</h2>
-          <dl class="facts">
-            <dt>Identificador</dt><dd id="facNode">—</dd>
-            <dt>Dirección</dt><dd id="facEndpoint">—</dd>
-            <dt>Huella del certificado</dt><dd id="facThumb" class="mono small">—</dd>
-            <dt>PSK configurada</dt><dd id="facPsk">—</dd>
-          </dl>
-          <div class="actions">
-            <a class="btn" href="/api/certificate" download="certificado.pem">Descargar certificado</a>
-          </div>
-          <h3>Probar otro nodo</h3>
-          <form id="pingForm" class="inline">
-            <input id="pingUrl" placeholder="192.168.1.20:5000" autocomplete="off">
-            <button class="btn" type="submit">Probar</button>
-          </form>
-          <pre id="pingOut" class="out hidden"></pre>
+        <article class="panel">
+          <h2 class="ptitle">Resultado</h2>
+          <div id="fwdResult" class="result empty">Sin operaciones todavía.</div>
         </article>
       </div>
     </section>
 
-    <section id="view-enviar" class="view">
-      <article class="card narrow">
-        <h2>Enviar paquete</h2>
-        <form id="emitForm" class="form">
-          <label>Destino (IP:puerto)
-            <input name="destination" id="emitDest" placeholder="192.168.1.20:5000" autocomplete="off" required>
-          </label>
-          <div class="row">
-            <label>Algoritmo
-              <select name="algorithm" id="emitAlgorithm"></select>
-            </label>
-            <label>Clave de sesión
-              <select name="keyExchange" id="emitKey">
-                <option value="RsaOaepSha256">RSA-OAEP (certificado del destino)</option>
-                <option value="PreSharedKey">PSK del grupo</option>
-                <option value="SharedKey">Clave compartida (NODO04, AES-GCM)</option>
-              </select>
-            </label>
+    <!-- 03 RED -->
+    <section id="view-red" class="view">
+      <article class="panel">
+        <div class="phead">
+          <h2 class="ptitle">Directorio de nodos</h2>
+          <div class="row-actions">
+            <button class="btn" id="btnScan" type="button">Buscar nodos (escaneo HTTP)</button>
+            <button class="btn" id="btnAnnounce2" type="button">Anunciarme</button>
           </div>
-          <label>Archivos
-            <input type="file" name="files" id="emitFiles" multiple>
-          </label>
-          <label>O un mensaje de texto
-            <textarea name="text" id="emitText" rows="4" placeholder="Escribe el mensaje…"></textarea>
-          </label>
-          <div class="actions">
-            <button class="btn primary" type="submit" id="emitBtn">Cifrar y enviar</button>
-            <span id="emitMsg" class="hint"></span>
-          </div>
+        </div>
+        <form id="manualForm" class="inline">
+          <input id="manIp" placeholder="IP (192.168.1.21)" autocomplete="off" required>
+          <input id="manPort" placeholder="Puerto (5001)" inputmode="numeric" autocomplete="off">
+          <button class="btn" type="submit">Alta manual</button>
         </form>
-        <div id="emitResult" class="result hidden"></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Nodo</th><th>Dirección</th><th>Algoritmos</th><th>Origen</th><th>Estado</th><th>Huella</th><th></th></tr></thead>
+            <tbody id="dirBody"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="dirEmpty">Aún no hay nodos. Espera un anuncio UDP, escanea o da de alta uno manual.</p>
       </article>
     </section>
 
-    <section id="view-bandeja" class="view">
-      <article class="card">
-        <div class="card-head">
-          <h2>Bandeja de solicitudes</h2>
-          <select id="inboxFilter" aria-label="Filtrar por estado">
-            <option value="">Todas</option>
-            <option value="Pending">Pendientes</option>
-            <option value="Relayed">Reenviadas</option>
-            <option value="Audited">Auditadas</option>
-            <option value="Rejected">Rechazadas</option>
-            <option value="Failed">Fallidas</option>
-          </select>
+    <!-- 04 SOLICITUDES -->
+    <section id="view-solicitudes" class="view">
+      <article class="panel">
+        <h2 class="ptitle">Bandeja · Solicitudes</h2>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Recibido</th><th>Origen</th><th>Paquete</th><th>Algoritmo</th><th>Validación</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="solBody"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="solEmpty">No hay solicitudes.</p>
+      </article>
+    </section>
+
+    <!-- 05 CONSULTAS -->
+    <section id="view-consultas" class="view">
+      <article class="panel">
+        <div class="phead">
+          <h2 class="ptitle">Consultas</h2>
+          <form id="importForm" class="inline">
+            <input type="file" id="importFile" accept=".zip">
+            <button class="btn" type="submit">Importar .zip</button>
+          </form>
         </div>
         <div class="table-wrap">
           <table class="table">
-            <thead>
-              <tr><th>Recibido</th><th>Origen</th><th>Algoritmo</th><th>Archivo</th><th>Estado</th><th></th></tr>
-            </thead>
-            <tbody id="inboxBody"></tbody>
+            <thead><tr><th>Fecha</th><th>Origen</th><th>Paquete</th><th>Algoritmo</th><th>Productor</th><th>Nota</th><th></th></tr></thead>
+            <tbody id="conBody"></tbody>
           </table>
         </div>
-        <p id="inboxEmpty" class="empty hidden">No hay solicitudes.</p>
+        <p class="empty hidden" id="conEmpty">No hay consultas.</p>
       </article>
-      <article id="detail" class="card hidden"></article>
     </section>
 
+    <!-- 06 MODO V1 -->
+    <section id="view-v1" class="view">
+      <div class="grid-2">
+        <article class="panel">
+          <h2 class="ptitle">Cadena v1 · rol</h2>
+          <p class="muted small">Formato anterior (NODO04 y contrato de RelayCryptoNode). Escucha también en el puerto 5000.</p>
+          <form id="v1Config" class="form">
+            <div class="seg" role="radiogroup" aria-label="Rol">
+              <label><input type="radio" name="role" value="Initial"><span>Initial</span></label>
+              <label><input type="radio" name="role" value="Intermediate"><span>Intermediate</span></label>
+              <label><input type="radio" name="role" value="Final"><span>Final</span></label>
+            </div>
+            <label>Siguiente nodo (IP:puerto)
+              <input id="v1Next" placeholder="192.168.1.20:5000" autocomplete="off">
+            </label>
+            <div class="row2">
+              <label>Algoritmo de salida <select id="v1Algo"></select></label>
+              <label>Clave de sesión
+                <select id="v1Key">
+                  <option value="RsaOaepSha256">RSA-OAEP (certificado)</option>
+                  <option value="PreSharedKey">PSK del grupo</option>
+                </select>
+              </label>
+            </div>
+            <label class="check"><input type="checkbox" id="v1Shared"> Salida en clave compartida (NODO04, AES-GCM)</label>
+            <label class="check"><input type="checkbox" id="v1Auto"> Procesar automáticamente lo que llegue</label>
+            <div class="row2">
+              <label>PSK del grupo <input id="v1Psk" type="password" placeholder="sin cambios" autocomplete="new-password"></label>
+              <label>Clave AES compartida <input id="v1Aes" autocomplete="off"></label>
+            </div>
+            <div class="row-actions"><button class="btn primary" type="submit">Guardar</button><span class="hint" id="v1Msg"></span></div>
+          </form>
+        </article>
+        <article class="panel">
+          <h2 class="ptitle">Enviar en formato v1</h2>
+          <form id="v1Emit" class="form">
+            <label>Destino (IP:puerto) <input name="destination" id="v1Dest" placeholder="192.168.1.20:5000" required autocomplete="off"></label>
+            <div class="row2">
+              <label>Algoritmo <select name="algorithm" id="v1EmitAlgo"></select></label>
+              <label>Clave
+                <select name="keyExchange">
+                  <option value="RsaOaepSha256">RSA-OAEP</option>
+                  <option value="PreSharedKey">PSK del grupo</option>
+                  <option value="SharedKey">Clave compartida (NODO04)</option>
+                </select>
+              </label>
+            </div>
+            <label>Archivos <input type="file" name="files" multiple></label>
+            <label>Mensaje <textarea name="text" rows="3"></textarea></label>
+            <div class="row-actions"><button class="btn primary" type="submit">Cifrar y enviar (v1)</button></div>
+          </form>
+          <div id="v1EmitResult" class="result empty">—</div>
+        </article>
+      </div>
+      <article class="panel">
+        <h2 class="ptitle">Bandeja v1</h2>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Recibido</th><th>Origen</th><th>Algoritmo</th><th>Archivo</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="v1Body"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="v1Empty">No hay paquetes v1.</p>
+      </article>
+    </section>
+
+    <!-- 07 BITÁCORA -->
     <section id="view-bitacora" class="view">
-      <article class="card">
-        <h2>Bitácora en vivo</h2>
-        <ul id="logList" class="log"></ul>
+      <article class="panel terminal">
+        <h2 class="ptitle">Bitácora en vivo</h2>
+        <ul class="log" id="logList"></ul>
       </article>
     </section>
   </main>
+
+  <dialog id="modal" class="modal">
+    <div class="modal-head"><h3 id="modalTitle">—</h3><button class="x" id="modalClose" type="button" aria-label="Cerrar">×</button></div>
+    <div id="modalBody" class="modal-body"></div>
+  </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
