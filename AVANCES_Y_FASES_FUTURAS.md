@@ -1,8 +1,23 @@
 # Avances del Proyecto y Hoja de Ruta de Fases Futuras
 
 **Proyecto:** `RelayCryptoNode`  
-**Fecha de corte:** 2026-11-24  
+**Fecha de corte:** 2026-11-25 (NODO06)  
 **Plataforma base:** `.NET 8 LTS (SDK 8.0.x, C# 12)` — Multiplataforma (Windows 11 y Arch Linux).
+
+---
+
+## 0. Actualización 2026-11-25 — Fases 2 y 3 completadas (NODO06)
+
+| Área | Estado |
+| :--- | :--- |
+| Casos de uso `Initial`, `Intermediate`, `Final` y bandeja (`RelayCryptoNode.Application`) | Implementados |
+| Certificado X.509 local, `.zip` de 3 archivos, transporte HTTP, bandeja persistente, evidencias, bitácora en vivo | Implementados |
+| API REST + panel web (`wwwroot/`) con cambio de rol en caliente | Implementados |
+| Compatibilidad con el NODO04 (manifiesto plano, firma `sha|huella|fecha`, AES-GCM de clave compartida) | Probada en ambos sentidos |
+| Pruebas | 92/92 (incluye cadena de 3 nodos en memoria) |
+
+**Pendiente (Fase 4):** prueba en la red del salón con los equipos físicos y acordar con los demás equipos el formato de
+`datos.enc` de los algoritmos distintos de AES-GCM (cada equipo usa el suyo).
 
 ---
 

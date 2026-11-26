@@ -62,3 +62,23 @@ Registro cronológico obligatorio de cada intervención realizada sobre el repos
 - **Completado y Validado:**
   - `dotnet build RelayCryptoNode.sln --no-restore -warnaserror`: **0 Errores** y **0 Advertencia(s)**.
   - `dotnet test RelayCryptoNode.sln --no-build --verbosity normal`: **79/79** pruebas correctas en `RelayCryptoNode.UnitTests` y **1/1** prueba correcta en `RelayCryptoNode.IntegrationTests` (80/80 totales, 0 fallidas, 0 omitidas).
+
+### Entrada #03 — 2026-11-25 — Fases 2 y 3 (casos de uso, adaptadores, API, panel) y compatibilidad con NODO04
+
+- **Contexto Consultado:**
+  - `prompts-agentes/00-contexto-global-reglas.md`, `docs/02-especificacion-protocolo/contrato-intercambio-zip-http.md`, `docs/01-arquitectura/diagramas-flujo-roles.md` y el nodo publicado del equipo 4 (`CentroCiberseguridad.Web`) para alinear el formato del manifiesto y la firma.
+- **Acciones Realizadas:**
+  - **Dominio:** `EmitInitialPackageCommand` y `RelayAndReEncryptCommand` aceptan el certificado del destino y metadatos extra; `INodeTransportSenderPort.FetchRemoteCertificatePemAsync`; `IPackageSerializerPort.GetCanonicalManifestBytes` y `DeserializePayloadBundle(bytes, nombre)`; `IncomingRequest.Rehydrate` para persistencia.
+  - **Aplicación:** `EmitInitialPackageUseCase`, `RelayAndReEncryptUseCase` (descifrado solo en RAM), `ReceiveAndAuditFinalUseCase`, `ManageIncomingRequestsUseCase`, `IncomingPackageService` (400/422/202), `RequestProcessingService`, `EnvelopeCryptoService`, `PayloadBundleFactory`, `RemoteNodeResolver`, `NodeRuntimeState` y `ILegacyPayloadCodec`.
+  - **Infraestructura:** `LocalCertificateService` (X.509 RSA 2048 en PEM), `ZipPackageSerializer` (lee formato plano y anidado, emite el plano), `HttpNodeTransportSender`, `FileRequestRepository` (bandeja en disco, sin NuGet), `FileSystemEvidenceStorage`, `InMemoryEventHub` (SSE), `PreSharedKeyWrapper` y `SharedKeyLegacyCodec` (AES-GCM compatible con NODO04).
+  - **WebHost:** API REST completa, manejo de errores a códigos HTTP, panel web en `wwwroot/` (`index.html`, `css/app.css`, `js/app.js`, sin JS ni CSS en línea) y nodo por defecto `NODO06`.
+  - **Pruebas:** `ZipPackageSerializerTests` (unitarias) y `ChainOfThreeNodesTests` con `NodeHarness` (cadena real de 3 nodos en memoria, alteración de `datos.enc`, paquete en formato NODO04 y modo de clave compartida).
+- **Contratos Dummy / Hardcodeados / Pendientes:**
+  - En formato de clave compartida solo se descifra AES-GCM; los demás algoritmos de otros equipos tienen formatos propios.
+  - La bandeja usa archivos JSON + `.zip` en `datos/bandeja/` en lugar de SQLite para no depender de paquetes NuGet nativos.
+  - Falta la prueba de campo con los equipos físicos (Fase 4).
+- **Completado y Validado:**
+  - `dotnet build -warnaserror` de los 4 proyectos de `src/`: 0 errores, 0 advertencias.
+  - 92/92 pruebas correctas (80 existentes + 12 nuevas).
+  - Prueba manual con 3 instancias reales en HTTP (NODO01 → NODO02 → NODO06) con los 15 algoritmos y las dos envolturas de clave: 30/30 auditorías limpias.
+  - Interoperabilidad con el NODO04 real en ambos sentidos (`202`, firma válida y descifrado correcto).

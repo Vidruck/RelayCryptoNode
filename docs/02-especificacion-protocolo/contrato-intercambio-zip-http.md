@@ -116,3 +116,87 @@ Recepción de un paquete `.zip` enviado por el nodo predecesor.
 | **`400 Bad Request`** | Solicitud HTTP o ZIP malformado. | Falta el archivo `.zip`, no contiene las 3 entradas (`datos.enc`, `certificado.pem`, `manifest.json`), JSON inválido o campos obligatorios ausentes. |
 | **`413 Payload Too Large`** | Tamaño de carga excedido. | El archivo `.zip` supera el límite máximo configurado en Kestrel/aplicación. |
 | **`422 Unprocessable Entity`** | Error criptográfico o de política semántica. | Algoritmo no registrado en el catálogo oficial (`UnsupportedAlgorithmException`), certificado X.509 corrupto/inválido o discrepancia estructural en `EncryptedSha256`. |
+
+---
+
+## 5. Formato que emite el nodo (compatible con el NODO04)
+
+Al probar contra el nodo del equipo 4 (`CentroCiberseguridad.Web`, que publicó la propuesta del grupo) se confirmó que su
+`manifest.json` es **plano** y que su firma no cubre el manifiesto completo. Para que los paquetes se acepten en ambos
+sentidos, RelayCryptoNode **emite** ese formato y **lee** los dos (el plano y el anidado de la sección 3).
+
+### 5.1 `manifest.json` emitido
+
+```json
+{
+  "version": "1.0",
+  "protocolVersion": "1.0",
+  "packetId": "4711cbcc-81ae-4d3b-99ee-9992293fa147",
+  "sourceNode": "NODO06",
+  "sourceIp": "192.168.1.6",
+  "timestampUtc": "2026-11-26T00:57:19.0000000Z",
+  "algorithm": "AES-256-GCM",
+  "algorithmCode": "AESGCM",
+  "payloadMode": "file",
+  "originalFileName": "para4.txt",
+  "originalExtension": ".txt",
+  "originalSizeBytes": 51,
+  "encryptedSha256": "2f46c5e5d30e97ae0ef47b4b95200302cf44eeb1aae94c1fee3824be3d8219ef",
+  "publicParameters": {
+    "rcn.protocol": "RelayCryptoNode/1.0",
+    "rcn.endpointAddress": "http://192.168.1.6:5000",
+    "rcn.keyExchangeAlgorithm": "RsaOaepSha256",
+    "rcn.originalSha256": "fc6888f3…",
+    "rcn.ivOrNonceBase64": "…",
+    "rcn.authTagBase64": "…",
+    "rcn.encryptedSessionKeyBase64": "…",
+    "hopCount": "1",
+    "payloadFormat": "RAW"
+  },
+  "certificateThumbprintSha256": "9E0FE9EC2C24FD91A0649655043D0451F91EB79AEE6588059E644788B4AA40D9",
+  "keyExchangeAlgorithm": "RsaOaepSha256",
+  "signatureAlgorithm": "RSA-PSS-SHA256",
+  "manifestSignatureBase64": "…"
+}
+```
+
+- `sourceNode` es texto (el NODO04 lo deserializa como `string`; un objeto haría que responda `400`).
+- Los campos con prefijo `rcn.` y los metadatos (`hopCount`, `originNode`, `payloadFormat`…) son propios de este nodo; los demás los ignoran.
+- `certificateThumbprintSha256` va en hexadecimal **mayúsculas**, igual que el NODO04.
+
+### 5.2 Firma
+
+`manifestSignatureBase64` = RSA-PSS-SHA256 (clave privada del nodo) sobre el texto UTF-8:
+
+```text
+<encryptedSha256>|<SHA-256 del certificado.pem en hex MAYÚSCULAS>|<timestampUtc tal cual aparece en el manifiesto>
+```
+
+Para manifiestos anidados (sección 3) se verifica sobre el JSON compacto sin el campo `manifestSignatureBase64`.
+
+### 5.3 Clave de sesión
+
+| Modo | `encryptedSessionKeyBase64` | Uso |
+| :--- | :--- | :--- |
+| RSA-OAEP-SHA256 | Clave AES/… aleatoria de 32 bytes cifrada con el certificado del destino (`GET /api/certificate`). | Entre nodos RelayCryptoNode. Funciona con los 15 algoritmos que cifran `datos.enc`. |
+| PSK del grupo | Clave de sesión cifrada con AES-256-GCM; KEK = PBKDF2-SHA256(PSK, `rcn.saltBase64`, 100 000). | Cuando el destino no publica certificado. |
+| Clave compartida (NODO04) | *(no va)* | `datos.enc` = nonce (12) ‖ etiqueta (16) ‖ cifrado, con clave = SHA-256(UTF-8(`clave-aes-256-segura`)). Solo AES-GCM. |
+
+Un paquete sin `encryptedSessionKeyBase64` se interpreta como clave compartida.
+
+### 5.4 Códigos HTTP (alineados con el NODO04)
+
+| Código | Caso |
+| :--- | :--- |
+| `202` | Paquete válido registrado en la bandeja. |
+| `400` | No es ZIP, faltan entradas, JSON roto o faltan `encryptedSha256` / `manifestSignatureBase64` / `packetId`. |
+| `413` | El `.zip` supera `Node:MaxPackageMegabytes` (50 MB por defecto, igual que el NODO04). |
+| `422` | Algoritmo fuera del catálogo, certificado inválido o vencido, `encryptedSha256` distinto o **firma inválida**. |
+
+### 5.5 Pruebas de interoperabilidad realizadas
+
+Se ejecutó el NODO04 publicado junto a tres instancias de RelayCryptoNode:
+
+- NODO04 → NODO06: `202`, firma válida; NODO06 descifró el AES-GCM con la clave compartida y recuperó el texto original.
+- NODO06 → NODO04 (clave compartida): `202`, `signatureValid: true`; el NODO04 aceptó el paquete y lo descifró con su propio motor.
+- NODO01 → NODO02 → NODO06 con los 15 algoritmos (RSA-OAEP y PSK): auditoría bit a bit limpia en los 30 casos.
