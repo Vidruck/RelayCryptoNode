@@ -1,12 +1,32 @@
 # Avances del Proyecto y Hoja de Ruta de Fases Futuras
 
 **Proyecto:** `RelayCryptoNode`  
-**Fecha de corte:** 2026-11-25 (NODO06)  
+**Fecha de corte:** 2026-11-26 (EQ06, antes NODO06)  
 **Plataforma base:** `.NET 8 LTS (SDK 8.0.x, C# 12)` — Multiplataforma (Windows 11 y Arch Linux).
 
 ---
 
-## 0. Actualización 2026-11-25 — Fases 2 y 3 completadas (NODO06)
+## 0. Actualización 2026-11-26 — Estándar de Comunicación v2.0 (EQ06)
+
+| Área | Estado |
+| :--- | :--- |
+| Identidad `EQ06`, puerto `5006` (`5000 + equipo`), certificado `CN=EQ06, O=Centro de Ciberseguridad` | Implementado |
+| Paquetes `package`/`result` firmados (cadena 8.4), validación 13.1 y errores del Anexo B en `problem+json` | Implementado y probado (16.2) |
+| Sobre CC-ENV-1, `/api/crypto/forward` e `/inverse`, delegación al nodo dueño del algoritmo | Implementado |
+| Descubrimiento: anuncio UDP `5099`, escaneo de la subred, alta manual y huella fijada (TOFU) | Implementado |
+| Algoritmos del equipo: 11 `LSBSTEGO` y 12 `EUCLIDESAFFINE` | Implementados |
+| Compatibilidad con el formato anterior (v1 / NODO04) en el puerto `5000` y en `/api/v1/*` | Probada con el NODO04 real |
+| Interfaz nueva (consola, operar, red, solicitudes, consultas, modo v1, bitácora) | Implementada |
+| Pruebas | 103/103 (11 nuevas de v2.0) |
+
+Detalle en `docs/02-especificacion-protocolo/estandar-v2.md`.
+
+**Pendiente:** prueba en la red del salón con los demás equipos (confirmar huellas, delegar algoritmos de otros equipos y
+recibir sus paquetes v2.0). Modo asíncrono (`/api/jobs`, `/api/keys`) no implementado: el nodo responde de forma síncrona.
+
+---
+
+## Actualización 2026-11-25 — Fases 2 y 3 completadas (NODO06)
 
 | Área | Estado |
 | :--- | :--- |
@@ -16,8 +36,8 @@
 | Compatibilidad con el NODO04 (manifiesto plano, firma `sha|huella|fecha`, AES-GCM de clave compartida) | Probada en ambos sentidos |
 | Pruebas | 92/92 (incluye cadena de 3 nodos en memoria) |
 
-**Pendiente (Fase 4):** prueba en la red del salón con los equipos físicos y acordar con los demás equipos el formato de
-`datos.enc` de los algoritmos distintos de AES-GCM (cada equipo usa el suyo).
+Lo que quedaba pendiente aquí (acordar con los demás equipos el formato de cada algoritmo) lo resolvió el Estándar v2.0:
+cada algoritmo lo ejecuta el equipo dueño mediante `/api/crypto/forward` e `/inverse`.
 
 ---
 
@@ -90,12 +110,13 @@ Se completó la **Fase 1** y la expansión integral del **Catálogo Oficial de 2
 
 ---
 
-### Fase 4 — Despliegue LAN de 6 Nodos Heterogéneos y Pruebas de Interoperabilidad
+### Fase 4 — Despliegue LAN entre equipos y Pruebas de Interoperabilidad (Estándar v2.0)
 
-**Objetivo:** Validar interoperabilidad real entre los 6 equipos físicos (Windows 11 y Arch Linux) conectados en red local.
+**Objetivo:** Validar interoperabilidad real entre los nodos de todos los equipos (Windows 11 y Arch Linux) conectados en red local.
 
 1. **Despliegue en Red Local (Access Point / LAN):**
-   - Levantar los 6 equipos escuchando en puerto TCP `5000`, intercambiando certificados `.pem` y ejecutando cadenas multi-salto con rotación dinámica entre los 21 algoritmos del catálogo.
+   - Cada equipo escucha en TCP `5000 + equipo` (EQ06 en `5006`) y anuncia su nodo por UDP `5099`; los nodos que sigan en el formato anterior se atienden en TCP `5000`.
+   - Confirmar la huella del certificado de cada nodo antes de confiar en él y ejecutar cada algoritmo en el nodo de su equipo dueño (tabla 4.1).
 2. **Pruebas de Campo y Auditoría Final:**
-   - Validación de compatibilidad `algorithmCode` / `algorithm` con las implementaciones de los otros equipos.
+   - Validación de `algorithmId` / `algorithmCode` de la tabla 4.1 y de los códigos de error del Anexo B con las implementaciones de los otros equipos.
    - Pruebas con texto plano, documentos PDF, imágenes PNG/BMP (`LSBSTEGO`), lotes multiparte y registro final en `prompts-agentes/bitacora-agentes-ia.md`.
