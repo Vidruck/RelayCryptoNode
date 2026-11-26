@@ -17,31 +17,14 @@ namespace RelayCryptoNode.WebHost.Endpoints;
 /// <summary>
 /// Endpoints REST del nodo: estado, certificado, recepción, bandeja, emisión, configuración y bitácora.
 /// </summary>
-internal static class NodeApi
+public static class NodeApi
 {
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
+    /// <summary>Endpoints del modo v1 (cadena de 3 nodos) bajo /api/v1.</summary>
     public static void MapNodeApi(this WebApplication app)
     {
-        var api = app.MapGroup("/api");
-
-        api.MapGet("/status", (NodeRuntimeState state, ICertificateServicePort certificates) =>
-        {
-            var current = state.Current;
-            return Results.Ok(new
-            {
-                nodeId = current.NodeId,
-                protocolVersion = "1.0",
-                status = "online",
-                acceptingPackages = true,
-                certificateThumbprint = certificates.ComputeThumbprintSha256(certificates.GetLocalCertificatePem()).ToUpperInvariant(),
-                role = current.Role.ToString(),
-                endpoint = current.PublicEndpoint
-            });
-        });
-
-        api.MapGet("/certificate", (ICertificateServicePort certificates) =>
-            Results.Text(certificates.GetLocalCertificatePem(), "application/x-pem-file"));
+        var api = app.MapGroup("/api/v1");
 
         api.MapPost("/requests/receive", ReceiveAsync);
 
@@ -228,7 +211,8 @@ internal static class NodeApi
         });
     }
 
-    private static async Task<IResult> ReceiveAsync(
+    /// <summary>Recepción en formato v1 (NODO04 / contrato anterior) desde la ruta /api/v1.</summary>
+    public static async Task<IResult> ReceiveAsync(
         HttpRequest http,
         IncomingPackageService reception,
         NodeSettingsStore settings,
@@ -237,11 +221,6 @@ internal static class NodeApi
         ILoggerFactory loggers,
         CancellationToken ct)
     {
-        if (http.ContentLength > settings.MaxPackageBytes)
-        {
-            return Results.Json(new { error = $"El paquete ZIP supera el límite de {settings.MaxPackageBytes / 1024 / 1024} MB." }, statusCode: StatusCodes.Status413PayloadTooLarge);
-        }
-
         byte[] bytes;
         string? fileName = null;
         if (http.HasFormContentType)
@@ -251,11 +230,6 @@ internal static class NodeApi
             if (file is null)
             {
                 return Results.BadRequest(new { error = "Se requiere multipart/form-data con campo 'package'." });
-            }
-
-            if (file.Length > settings.MaxPackageBytes)
-            {
-                return Results.Json(new { error = "El paquete ZIP supera el límite configurado." }, statusCode: StatusCodes.Status413PayloadTooLarge);
             }
 
             fileName = file.FileName;
@@ -269,10 +243,25 @@ internal static class NodeApi
             using var buffer = new MemoryStream();
             await http.Body.CopyToAsync(buffer, ct);
             bytes = buffer.ToArray();
-            if (bytes.LongLength > settings.MaxPackageBytes)
-            {
-                return Results.Json(new { error = "El paquete ZIP supera el límite configurado." }, statusCode: StatusCodes.Status413PayloadTooLarge);
-            }
+        }
+
+        return await ReceiveRawAsync(bytes, fileName, reception, settings, state, processing, loggers, ct);
+    }
+
+    /// <summary>Procesa un .zip en formato v1 ya leído.</summary>
+    public static async Task<IResult> ReceiveRawAsync(
+        byte[] bytes,
+        string? fileName,
+        IncomingPackageService reception,
+        NodeSettingsStore settings,
+        NodeRuntimeState state,
+        RequestProcessingService processing,
+        ILoggerFactory loggers,
+        CancellationToken ct)
+    {
+        if (bytes.LongLength > settings.MaxPackageBytes)
+        {
+            return Results.Json(new { error = $"El paquete ZIP supera el límite de {settings.MaxPackageBytes / 1024 / 1024} MB." }, statusCode: StatusCodes.Status413PayloadTooLarge);
         }
 
         var result = await reception.ReceiveAsync(bytes, ct);

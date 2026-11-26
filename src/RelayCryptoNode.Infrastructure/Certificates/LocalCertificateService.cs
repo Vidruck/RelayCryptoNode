@@ -22,7 +22,10 @@ public sealed class LocalCertificateService : ICertificateServicePort
     /// </summary>
     /// <param name="certificatesDirectory">Carpeta donde se guardan <c>&lt;NODO&gt;-cert.pem</c> y <c>&lt;NODO&gt;-key.pem</c>.</param>
     /// <param name="nodeId">Identificador del nodo; se usa como CN del certificado.</param>
-    public LocalCertificateService(string certificatesDirectory, string nodeId)
+    /// <param name="keyPassword">
+    /// Contraseña con la que se cifra la llave privada en disco (PKCS#8 cifrado). Si es nula se usa una derivada del equipo.
+    /// </param>
+    public LocalCertificateService(string certificatesDirectory, string nodeId, string? keyPassword = null)
     {
         if (string.IsNullOrWhiteSpace(nodeId))
         {
@@ -34,20 +37,32 @@ public sealed class LocalCertificateService : ICertificateServicePort
         var certPath = Path.Combine(certificatesDirectory, $"{id}-cert.pem");
         var keyPath = Path.Combine(certificatesDirectory, $"{id}-key.pem");
 
+        var password = string.IsNullOrEmpty(keyPassword)
+            ? $"{Environment.MachineName}|{Environment.UserName}|RelayCryptoNode"
+            : keyPassword;
         if (File.Exists(certPath) && File.Exists(keyPath))
         {
-            _certificatePem = File.ReadAllText(certPath);
-            _privateKeyPem = File.ReadAllText(keyPath);
-            using var existing = X509Certificate2.CreateFromPem(_certificatePem);
-            if (existing.NotAfter.ToUniversalTime() > DateTime.UtcNow.AddDays(1))
+            try
             {
-                return;
+                _certificatePem = File.ReadAllText(certPath);
+                _privateKeyPem = ReadPrivateKey(File.ReadAllText(keyPath), password);
+                using var existing = X509Certificate2.CreateFromPem(_certificatePem);
+                if (existing.NotAfter.ToUniversalTime() > DateTime.UtcNow.AddDays(1)
+                    && existing.Subject.Contains("O=Centro de Ciberseguridad", StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+            catch (CryptographicException)
+            {
+                // Llave ilegible (otra contraseña): se genera una identidad nueva.
             }
         }
 
-        (_certificatePem, _privateKeyPem) = Generate(id);
+        string encryptedKey;
+        (_certificatePem, _privateKeyPem, encryptedKey) = Generate(id, password);
         File.WriteAllText(certPath, _certificatePem);
-        File.WriteAllText(keyPath, _privateKeyPem);
+        File.WriteAllText(keyPath, encryptedKey);
     }
 
     /// <summary>
@@ -163,22 +178,45 @@ public sealed class LocalCertificateService : ICertificateServicePort
     private static string Thumbprint(X509Certificate2 certificate) =>
         certificate.GetCertHashString(HashAlgorithmName.SHA256).ToLowerInvariant();
 
-    private static (string CertificatePem, string PrivateKeyPem) Generate(string nodeId)
+    private static string ReadPrivateKey(string pem, string password)
+    {
+        if (!pem.Contains("ENCRYPTED PRIVATE KEY", StringComparison.Ordinal))
+        {
+            return pem;
+        }
+
+        using var rsa = RSA.Create();
+        rsa.ImportFromEncryptedPem(pem, password);
+        return rsa.ExportPkcs8PrivateKeyPem();
+    }
+
+    // Estándar v2.0, sección 7: RSA-2048, sha256WithRSAEncryption, CN=<nodeId>, OU=Equipo NN,
+    // O=Centro de Ciberseguridad, C=MX, 365 días, número de serie aleatorio de 128 bits.
+    private static (string CertificatePem, string PrivateKeyPem, string EncryptedKeyPem) Generate(string nodeId, string password)
     {
         using var rsa = RSA.Create(2048);
-        var request = new CertificateRequest(
-            $"CN={nodeId}, OU=Virologia y Criptografia, O=RelayCryptoNode",
-            rsa,
-            HashAlgorithmName.SHA256,
-            RSASignaturePadding.Pkcs1);
+        var team = nodeId.StartsWith("EQ", StringComparison.Ordinal) ? nodeId[2..] : nodeId;
+        var subject = new X500DistinguishedName($"CN={nodeId}, OU=Equipo {team}, O=Centro de Ciberseguridad, C=MX");
+        var request = new CertificateRequest(subject, rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
         request.CertificateExtensions.Add(new X509KeyUsageExtension(
             X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment,
             true));
         request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
 
-        var notBefore = DateTimeOffset.UtcNow.AddDays(-1);
-        using var certificate = request.CreateSelfSigned(notBefore, notBefore.AddYears(2));
-        return (certificate.ExportCertificatePem(), rsa.ExportPkcs8PrivateKeyPem());
+        var serial = RandomNumberGenerator.GetBytes(16);
+        serial[0] &= 0x7F;
+        serial[0] |= 0x01;
+        var notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
+        using var certificate = request.Create(
+            subject,
+            X509SignatureGenerator.CreateForRSA(rsa, RSASignaturePadding.Pkcs1),
+            notBefore,
+            notBefore.AddDays(365),
+            serial);
+        var encrypted = rsa.ExportEncryptedPkcs8PrivateKeyPem(
+            password,
+            new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 100_000));
+        return (certificate.ExportCertificatePem(), rsa.ExportPkcs8PrivateKeyPem(), encrypted);
     }
 }

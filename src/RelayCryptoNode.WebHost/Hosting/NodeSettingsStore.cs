@@ -32,6 +32,21 @@ public sealed class NodeSettingsStore
     public required long MaxPackageBytes { get; init; }
 
     /// <summary>
+    /// Número de equipo (1–99); define nodeId EQNN y el puerto 5000 + NN.
+    /// </summary>
+    public int TeamNumber { get; private set; } = 6;
+
+    /// <summary>
+    /// Puerto HTTP v2.0.
+    /// </summary>
+    public int HttpPort { get; private set; } = 5006;
+
+    /// <summary>
+    /// Puerto extra para nodos con el formato anterior (v1), o 0 si está apagado.
+    /// </summary>
+    public int LegacyPort { get; private set; } = 5000;
+
+    /// <summary>
     /// Crea el estado del nodo a partir de la configuración.
     /// </summary>
     public static (NodeSettingsStore Store, NodeRuntimeState State) Load(IConfiguration configuration, string contentRoot)
@@ -50,9 +65,10 @@ public sealed class NodeSettingsStore
             MaxPackageBytes = (section.GetValue<long?>("MaxPackageMegabytes") ?? 50) * 1024 * 1024
         };
 
-        var port = section.GetValue<int?>("Port") ?? 5000;
+        var team = section.GetValue<int?>("TeamNumber") ?? 6;
+        var port = section.GetValue<int?>("Port") ?? (5000 + team);
         var snapshot = new NodeRuntimeSnapshot(
-            section["Id"] is { Length: > 0 } id ? id : "NODO06",
+            $"EQ{team:00}",
             section["PublicUrl"] is { Length: > 0 } url ? url : $"http://{DetectLanAddress()}:{port}",
             Enum.TryParse<NodeRole>(section["Role"], true, out var role) ? role : NodeRole.Final,
             section["NextNode"],
@@ -60,6 +76,9 @@ public sealed class NodeSettingsStore
             Enum.TryParse<KeyExchangeAlgorithmType>(section["KeyExchange"], true, out var kx) ? kx : KeyExchangeAlgorithmType.RsaOaepSha256,
             section.GetValue<bool?>("AutoProcess") ?? false,
             section.GetValue<bool?>("SharedKeyFormat") ?? false);
+        store.TeamNumber = team;
+        store.HttpPort = port;
+        store.LegacyPort = section.GetValue<int?>("LegacyPort") ?? 5000;
         var preSharedKey = section["PreSharedKey"];
         var sharedAesKey = section["SharedAesKey"];
 
