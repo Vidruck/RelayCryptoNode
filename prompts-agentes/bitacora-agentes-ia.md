@@ -82,3 +82,22 @@ Registro cronológico obligatorio de cada intervención realizada sobre el repos
   - 92/92 pruebas correctas (80 existentes + 12 nuevas).
   - Prueba manual con 3 instancias reales en HTTP (NODO01 → NODO02 → NODO06) con los 15 algoritmos y las dos envolturas de clave: 30/30 auditorías limpias.
   - Interoperabilidad con el NODO04 real en ambos sentidos (`202`, firma válida y descifrado correcto).
+
+### Entrada #04 — 2026-11-25 — Estándar de Comunicación v2.0, compatibilidad v1 e interfaz nueva
+
+- **Contexto Consultado:**
+  - PDF del Estándar de Comunicación v2.0 del grupo (tabla 4.1 de 21 algoritmos, secciones 8, 9, 13 y 16 y Anexo B).
+- **Acciones Realizadas:**
+  - **Infraestructura (`ProtocolV2/`):** catálogo 4.1, formato (nombres, huellas, cadena de firma, parámetros canónicos), errores del Anexo B, sobre CC-ENV-1, identidad `EQ06`, armado y validación del paquete (`package`/`result`, reenvío 9.6), directorio con huella fijada, registro de repetidos, almacén de paquetes, proveedores 11 `LSBSTEGO` y 12 `EUCLIDESAFFINE`, y `V2NodeService` (recepción, servicio 13.2, delegación al nodo dueño).
+  - **Certificado:** sujeto v2 (`CN=EQ06, OU=Equipo 06, O=Centro de Ciberseguridad, C=MX`), 365 días, llave PKCS#8 cifrada; se regenera si el sujeto es el viejo.
+  - **WebHost:** puerto `5000 + equipo` (5006) y `5000` para v1; anuncio y escucha UDP 5099; endpoints del estándar; el formato anterior pasa a `/api/v1/*` y `/api/requests/receive` decide entre v1 y v2 por la versión del manifiesto; errores en `problem+json`.
+  - **Interfaz:** rediseño completo (negro, morado, dorado, verde y rojo): consola con radar de la LAN y matriz de algoritmos, operar, red, solicitudes, consultas, modo v1 y bitácora en vivo.
+  - **Pruebas:** `ProtocolV2Tests` (11 pruebas: formato, paquete, alteraciones, reenvío, sobre, afín y LSB).
+- **Contratos Dummy / Hardcodeados / Pendientes:**
+  - Solo modo síncrono: `/api/jobs` y `/api/keys` responden que no existen.
+  - Falta la prueba de campo con los demás equipos.
+- **Completado y Validado:**
+  - 103/103 pruebas correctas (92 anteriores + 11 nuevas).
+  - Dos nodos v2 reales (EQ06 y EQ07): anuncio, confirmación de huella, afín y LSB delegados ida y vuelta, envío a bandeja y rechazos de conformidad (ver `docs/02-especificacion-protocolo/estandar-v2.md`).
+  - Formato anterior con el NODO04 real en ambos sentidos.
+

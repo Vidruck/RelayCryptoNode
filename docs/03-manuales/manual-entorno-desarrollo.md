@@ -1,6 +1,6 @@
 # Manual de Entorno de Desarrollo Multiplataforma (Windows 11 y Arch Linux)
 
-Guía práctica para preparar cualquier equipo del proyecto **RelayCryptoNode** garantizando paridad completa usando exclusivamente el SDK oficial de **.NET 8 LTS** y habilitando comunicación LAN en el puerto TCP `5000`.
+Guía práctica para preparar cualquier equipo del proyecto **RelayCryptoNode** garantizando paridad completa usando exclusivamente el SDK oficial de **.NET 8 LTS** y habilitando comunicación LAN en los puertos TCP `5000 + equipo` (v2.0), TCP `5000` (v1) y UDP `5099` (anuncios).
 
 ---
 
@@ -34,6 +34,9 @@ dotnet --info
 Ejecutar PowerShell **como Administrador**:
 
 ```powershell
+# Estándar v2.0 (equipo 6 = 5006) y anuncio UDP; repetir el bloque de abajo para el 5000 (formato v1).
+New-NetFirewallRule -DisplayName "RelayCryptoNode v2 TCP 5006" -Direction Inbound -Protocol TCP -LocalPort 5006 -Action Allow -Profile Private
+New-NetFirewallRule -DisplayName "RelayCryptoNode beacon UDP 5099" -Direction Inbound -Protocol UDP -LocalPort 5099 -Action Allow -Profile Private
 New-NetFirewallRule `
   -DisplayName "RelayCryptoNode HTTP 5000 (LAN)" `
   -Direction Inbound `
@@ -71,6 +74,8 @@ Verifique qué firewall está habilitado en el equipo y aplique **solo el que co
 
 ```bash
 sudo ufw allow 5000/tcp
+sudo ufw allow 5006/tcp
+sudo ufw allow 5099/udp
 sudo ufw reload
 sudo ufw status
 ```
@@ -79,6 +84,8 @@ sudo ufw status
 
 ```bash
 sudo firewall-cmd --add-port=5000/tcp --permanent
+sudo firewall-cmd --add-port=5006/tcp --permanent
+sudo firewall-cmd --add-port=5099/udp --permanent
 sudo firewall-cmd --reload
 sudo firewall-cmd --list-ports
 ```
@@ -86,7 +93,8 @@ sudo firewall-cmd --list-ports
 - **Con `nftables` (si se usa conjunto por defecto `inet filter`):**
 
 ```bash
-sudo nft add rule inet filter input tcp dport 5000 accept
+sudo nft add rule inet filter input tcp dport { 5000, 5006 } accept
+sudo nft add rule inet filter input udp dport 5099 accept
 ```
 
 ---
@@ -111,5 +119,6 @@ dotnet run --project src/RelayCryptoNode.WebHost/RelayCryptoNode.WebHost.csproj 
 Desde otro equipo en la LAN, valide conectividad sustituyendo `<IP_NODO>`:
 
 ```bash
-curl http://<IP_NODO>:5000/api/status
+curl http://<IP_NODO>:5006/api/status   # v2.0
+curl http://<IP_NODO>:5000/api/status   # v1 (puerto de compatibilidad)
 ```

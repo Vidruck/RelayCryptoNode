@@ -30,13 +30,14 @@ RelayCryptoNode/
 │   │   ├── ADR-002-algoritmos-vigentes.md
 │   │   └── diagramas-flujo-roles.md
 │   ├── 02-especificacion-protocolo/
-│   │   └── contrato-intercambio-zip-http.md
+│   │   ├── contrato-intercambio-zip-http.md     # Formato v1 (NODO04)
+│   │   └── estandar-v2.md                      # Implementación del Estándar v2.0
 │   └── 03-manuales/
 │       └── manual-entorno-desarrollo.md
 ├── src/
 │   ├── RelayCryptoNode.Domain/                 # Capa 1: C# puro, 0 NuGet externos
 │   ├── RelayCryptoNode.Application/            # Capa 2: casos de uso Initial / Intermediate / Final y bandeja
-│   ├── RelayCryptoNode.Infrastructure/         # Capa 3: 21 algoritmos, X.509, ZIP, HTTP, bandeja en disco, evidencias
+│   ├── RelayCryptoNode.Infrastructure/         # Capa 3: 21 algoritmos, X.509, ZIP, HTTP, bandeja, evidencias y ProtocolV2/
 │   └── RelayCryptoNode.WebHost/                # Capa 4: API REST + panel web (wwwroot) + bitácora en vivo (SSE)
 ├── INICIAR_NODO.bat                            # Arranque rápido en Windows (opcional)
 └── tests/
@@ -59,80 +60,84 @@ dotnet build RelayCryptoNode.sln --no-restore -warnaserror
 dotnet test RelayCryptoNode.sln --no-build --verbosity normal
 ```
 
-### Arrancar el nodo (Puerto 5000)
+### Arrancar el nodo
 
 ```bash
 dotnet run --project src/RelayCryptoNode.WebHost/RelayCryptoNode.WebHost.csproj
 ```
 
-En Windows también se puede dar doble clic a `INICIAR_NODO.bat`. El panel queda en `http://localhost:5000/` y, desde otra
-computadora de la red, en `http://<IP-del-equipo>:5000/`.
+En Windows también se puede dar doble clic a `INICIAR_NODO.bat`. El nodo escucha en dos puertos:
 
-La primera vez el nodo genera su certificado X.509 (RSA 2048, `CN=NODO06`) en `src/RelayCryptoNode.WebHost/datos/certificados/`.
-La carpeta `datos/` también guarda la bandeja (`bandeja/`), las evidencias de auditoría (`evidencia/`) y la configuración
-que se cambie desde el panel (`configuracion-nodo.json`). Está excluida de git.
+| Puerto | Uso |
+| :--- | :--- |
+| **TCP 5006** (`5000 + equipo`) | Estándar de Comunicación **v2.0** y panel web: `http://<IP>:5006/` |
+| **TCP 5000** | Formato anterior (v1 / NODO04), para los nodos que todavía no migran. Se omite si el puerto está ocupado. |
+| **UDP 5099** | Anuncio `CC-BEACON` cada 30 s y escucha de los demás nodos. |
 
-Verificar estado del nodo:
+En Windows hay que abrir los tres en el firewall (ver el [manual](docs/03-manuales/manual-entorno-desarrollo.md)).
+
+La primera vez el nodo genera su certificado X.509 (`CN=EQ06, OU=Equipo 06, O=Centro de Ciberseguridad, C=MX`, RSA 2048,
+365 días; llave privada PKCS#8 cifrada) en `src/RelayCryptoNode.WebHost/datos/certificados/`. Si encuentra un certificado
+viejo (`CN=NODO06`) lo reemplaza. La carpeta `datos/` también guarda el directorio de nodos, los paquetes v2 (`v2/`),
+la bandeja v1 (`bandeja/`), las evidencias y la configuración. Está excluida de git.
 
 ```bash
-curl http://localhost:5000/api/status
+curl http://localhost:5006/api/status
 ```
-
-Respuesta esperada:
 
 ```json
 {
-  "nodeId": "NODO06",
-  "protocolVersion": "1.0",
+  "nodeId": "EQ06",
+  "teamNumber": 6,
+  "protocolVersion": "2.0",
   "status": "online",
-  "acceptingPackages": true,
-  "certificateThumbprint": "9E0FE9EC…",
-  "role": "Final",
-  "endpoint": "http://192.168.1.6:5000"
+  "httpPort": 5006,
+  "certificateThumbprintSha256": "C93E2767…",
+  "supportedProtocolVersions": ["2.0", "1.0"]
 }
 ```
+
+### Panel (interfaz)
+
+| Pestaña | Qué hace |
+| :--- | :--- |
+| **Consola** | Identidad y huella del nodo, radar de la LAN, contadores y matriz de los 21 algoritmos con su disponibilidad. |
+| **Operar** | `forward` de cualquier algoritmo: local si es del EQ06 (11 LSBSTEGO, 12 EUCLIDESAFFINE) o delegado al nodo dueño. Los parámetros y secretos salen del perfil que publica cada nodo. |
+| **Red** | Directorio de nodos (anuncio UDP, escaneo HTTP de la subred o alta manual) y confirmación de la huella (TOFU). |
+| **Solicitudes** | Paquetes v2 que llegan a la bandeja: aceptar o rechazar. |
+| **Consultas** | Paquetes generados, aceptados y resultados: descargar, ver manifiesto, invertir, enviar a otro nodo. |
+| **Modo v1** | Cadena del formato anterior (rol Initial/Intermediate/Final, emisión y bandeja v1). |
+| **Bitácora** | Eventos en vivo (SSE). |
 
 ### Configuración (`src/RelayCryptoNode.WebHost/appsettings.json`)
 
 | Clave `Node:*` | Valor por defecto | Uso |
 | :--- | :--- | :--- |
-| `Id` | `NODO06` | Identificador del nodo y CN del certificado. |
-| `Role` | `Final` | `Initial`, `Intermediate` o `Final` (se cambia en caliente desde el panel). |
-| `PublicUrl` | *(vacío)* | Dirección que se anuncia; vacío = IP de la red local detectada + puerto. |
-| `NextNode` | *(vacío)* | Siguiente nodo de la cadena (`IP:puerto`). |
-| `OutgoingAlgorithm` | `AESGCM` | Código del catálogo con el que se cifra la salida. |
-| `KeyExchange` | `RsaOaepSha256` | Envoltura de la clave de sesión: `RsaOaepSha256` o `PreSharedKey`. |
-| `SharedKeyFormat` | `false` | Salida en formato de clave compartida del grupo (compatible con NODO04, solo AES-GCM). |
-| `SharedAesKey` | `clave-aes-256-segura` | Clave de texto de AES-GCM en formato compartido (la misma que trae el NODO04). |
-| `PreSharedKey` | *(vacío)* | PSK del grupo para envolver la clave de sesión sin certificados. |
-| `AutoProcess` | `false` | Acepta y procesa solos los paquetes válidos. |
-| `MaxPackageMegabytes` | `50` | Límite del `.zip` (responde `413` si se excede). |
+| `TeamNumber` | `6` | Número de equipo: define `EQ06`, el puerto `5006` y los algoritmos propios. |
+| `LegacyPort` | `5000` | Puerto del formato v1 (`0` para desactivarlo). |
+| `Urls` | *(vacío)* | Fuerza las direcciones de escucha (separadas por `;`). |
+| `ProvidedAlgorithms` | *(vacío)* | Sustituye la lista de algoritmos propios (por defecto la de la tabla 4.1). |
+| `Role`, `NextNode`, `OutgoingAlgorithm`, `KeyExchange`, `SharedKeyFormat`, `SharedAesKey`, `PreSharedKey`, `AutoProcess` | | Cadena v1 (igual que antes; se cambian en la pestaña *Modo v1*). |
+| `MaxPackageMegabytes` | `50` | Límite del `.zip`. |
 
-### Endpoints
+### Endpoints del estándar v2.0
 
 | Método y ruta | Uso |
 | :--- | :--- |
-| `GET /api/status` | Estado del nodo (contrato común). |
-| `GET /api/certificate` | Certificado PEM público del nodo (para envolver la clave de sesión con RSA-OAEP). |
-| `POST /api/requests/receive` | Recibe el `.zip` (`multipart/form-data`, campo `package`): `202`, `400`, `413` o `422`. |
-| `GET /api/requests[?status=Pending]` | Bandeja de solicitudes. |
-| `POST /api/requests/{id}/accept` | Acepta y procesa según el rol: Intermediate reenvía; Initial/Final descifran y auditan. |
-| `POST /api/requests/{id}/reject` | Rechaza (`{"reason":"…"}`). |
-| `GET /api/requests/{id}/package` | Descarga el `.zip` recibido. |
-| `POST /api/emit` | Emite un paquete (archivos y/o texto, destino, algoritmo y clave de sesión). |
-| `GET /api/audits/{packetId}` · `GET /api/evidence/{packetId}/{archivo}` | Reporte de auditoría y archivos recuperados. |
-| `GET/PUT /api/config` | Rol, siguiente nodo, algoritmo de salida y claves. |
-| `GET /api/events` · `GET /api/events/stream` | Bitácora y bitácora en vivo (Server-Sent Events). |
+| `GET /api/status` · `GET /api/certificate` · `GET /api/algorithms` | Estado, certificado PEM y perfil de algoritmos. |
+| `POST /api/requests/receive` | Bandeja: `202` con un paquete v2 válido; errores `problem+json` (`E-ZIP-STRUCTURE`, `E-HASH`, `E-SIGNATURE`, `E-TIMESTAMP`, `E-DUPLICATE` 409, `E-CERT-UNTRUSTED` 403…). Si el zip es del formato anterior se procesa como v1. |
+| `POST /api/crypto/forward` · `POST /api/crypto/inverse` | Servicio de algoritmo para otros nodos (secretos en sobre CC-ENV-1, resultado `RES_*.zip` firmado). |
+| `GET /api/jobs/{id}` · `GET /api/keys/{id}` | Responden `E-JOB-NOT-FOUND` / `E-KEY-NOT-FOUND` (el nodo trabaja en modo síncrono). |
 
-### Compatibilidad con otros equipos
+El formato anterior queda bajo `/api/v1/*` (`requests`, `emit`, `config`, `algorithms`, `audits`, `evidence`, `events`).
+Detalle en [estandar-v2.md](docs/02-especificacion-protocolo/estandar-v2.md) y
+[contrato-intercambio-zip-http.md](docs/02-especificacion-protocolo/contrato-intercambio-zip-http.md) (v1).
 
-El `manifest.json` que emite el nodo es el formato plano que usa el grupo (el mismo del NODO04) y la firma
-`manifestSignatureBase64` es RSA-PSS-SHA256 sobre `encryptedSha256|HUELLA_SHA256_DEL_CERTIFICADO|timestampUtc`.
-Los datos propios de RelayCryptoNode (nonce, etiqueta, clave de sesión envuelta, huella del original) viajan en
-`publicParameters` con prefijo `rcn.`, que los demás nodos ignoran. Al recibir, se aceptan tanto ese formato como el
-anidado descrito en el contrato. Detalle en [contrato-intercambio-zip-http.md](docs/02-especificacion-protocolo/contrato-intercambio-zip-http.md).
+### Compatibilidad con el formato anterior
 
-Para configurar el entorno de red, certificados y reglas de firewall en Windows 11 y Arch Linux, consulte [manual-entorno-desarrollo.md](docs/03-manuales/manual-entorno-desarrollo.md).
+Un paquete cuyo `manifest.json` no trae `"version": "2.x"` se procesa con la lógica v1: manifiesto plano del grupo
+(el del NODO04), firma RSA-PSS-SHA256 sobre `encryptedSha256|HUELLA|timestampUtc` y AES-GCM de clave compartida.
+Funciona tanto en el puerto 5006 como en el 5000, y la pestaña *Modo v1* sigue emitiendo en ese formato.
 
 ---
 
