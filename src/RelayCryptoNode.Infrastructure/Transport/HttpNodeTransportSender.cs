@@ -78,6 +78,12 @@ public sealed class HttpNodeTransportSender : INodeTransportSenderPort
 
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var extracted = RelayCryptoNode.Infrastructure.ProtocolV2.V2Format.ExtractCertificatePem(body);
+        if (extracted is not null)
+        {
+            return extracted;
+        }
+
         if (body.Contains("BEGIN CERTIFICATE", StringComparison.Ordinal) && !body.TrimStart().StartsWith('{'))
         {
             return body.Trim();

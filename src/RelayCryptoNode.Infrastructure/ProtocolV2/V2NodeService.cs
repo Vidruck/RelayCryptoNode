@@ -260,13 +260,18 @@ public sealed class V2NodeService
             subject = certificate.Subject;
         }
 
+        thumb = V2Format.Thumbprint(pem);
         if (entry.ProtocolVersion == V2Format.Version)
         {
-            thumb = V2PackageCodec.ValidateCertificate(pem, nodeId);
-        }
-        else
-        {
-            thumb = V2Format.Thumbprint(pem);
+            try
+            {
+                V2PackageCodec.ValidateCertificate(pem, nodeId);
+            }
+            catch (V2ProtocolException ex)
+            {
+                // Se deja confirmar igual: el operador ve el aviso y decide comparando la huella.
+                subject += $" · AVISO {ex.Code}: {ex.Message}";
+            }
         }
 
         if (entry.SeenThumbprintSha256 is not null && entry.SeenThumbprintSha256 != thumb)
@@ -861,14 +866,14 @@ public sealed class V2NodeService
         AddHeaders(message, V2Format.NewUuid());
         using var response = await _http.SendAsync(message, ct).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode || !body.Contains("BEGIN CERTIFICATE", StringComparison.Ordinal))
+        var pem = response.IsSuccessStatusCode ? V2Format.ExtractCertificatePem(body) : null;
+        if (pem is null)
         {
-            throw new V2ProtocolException("E-CERT", $"{entry.NodeId} no entregó su certificado en /api/certificate.");
+            var sample = body.Length > 160 ? body[..160] + "…" : body;
+            throw new V2ProtocolException("E-CERT", $"{entry.NodeId} no entregó un certificado legible en /api/certificate (HTTP {(int)response.StatusCode}): {sample}");
         }
 
-        var start = body.IndexOf("-----BEGIN CERTIFICATE-----", StringComparison.Ordinal);
-        var end = body.IndexOf("-----END CERTIFICATE-----", StringComparison.Ordinal) + "-----END CERTIFICATE-----".Length;
-        return body[start..end];
+        return pem;
     }
 
     private string TargetUrl(string target)

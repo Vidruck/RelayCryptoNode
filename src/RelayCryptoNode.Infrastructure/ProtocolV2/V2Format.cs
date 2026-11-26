@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace RelayCryptoNode.Infrastructure.ProtocolV2;
@@ -45,6 +46,120 @@ public static partial class V2Format
 
     /// <summary>SHA-256 en hex minúsculas.</summary>
     public static string Sha256Hex(byte[] data) => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+
+    /// <summary>
+    /// Saca el certificado de lo que regrese otro nodo en <c>/api/certificate</c>: PEM directo, JSON con cualquier
+    /// nombre de campo (también anidado), saltos de línea escapados o solo el Base64 del DER. Regresa un PEM limpio.
+    /// </summary>
+    public static string? ExtractCertificatePem(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        var text = body.Trim();
+        if (text.StartsWith('{') || text.StartsWith('[') || text.StartsWith('"'))
+        {
+            try
+            {
+                var found = FindCertificateText(JsonNode.Parse(text));
+                if (found is not null)
+                {
+                    text = found;
+                }
+            }
+            catch (System.Text.Json.JsonException)
+            {
+            }
+        }
+
+        text = text.Replace("\\r", string.Empty).Replace("\\n", "\n").Replace("\\/", "/");
+        const string begin = "-----BEGIN CERTIFICATE-----";
+        const string end = "-----END CERTIFICATE-----";
+        var start = text.IndexOf(begin, StringComparison.Ordinal);
+        string base64;
+        if (start >= 0)
+        {
+            var stop = text.IndexOf(end, start, StringComparison.Ordinal);
+            if (stop < 0)
+            {
+                return null;
+            }
+
+            base64 = text[(start + begin.Length)..stop];
+        }
+        else
+        {
+            base64 = text;
+        }
+
+        base64 = new string(base64.Where(c => !char.IsWhiteSpace(c)).ToArray());
+        try
+        {
+            var der = Convert.FromBase64String(base64);
+            using var certificate = new X509Certificate2(der);
+            return certificate.ExportCertificatePem();
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+        catch (CryptographicException)
+        {
+            return null;
+        }
+    }
+
+    private static string? FindCertificateText(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonValue value when value.TryGetValue<string>(out var str):
+                return str.Contains("BEGIN CERTIFICATE", StringComparison.Ordinal) ? str : null;
+            case JsonObject obj:
+                foreach (var name in new[] { "certificatePem", "certificate", "pem", "certificado", "certificadoPem" })
+                {
+                    if (obj[name] is JsonValue v && v.TryGetValue<string>(out var s) && s.Length > 100)
+                    {
+                        return s;
+                    }
+                }
+
+                foreach (var pair in obj)
+                {
+                    if (pair.Key.Contains("cert", StringComparison.OrdinalIgnoreCase)
+                        && pair.Value is JsonValue cv && cv.TryGetValue<string>(out var cs) && cs.Length > 100)
+                    {
+                        return cs;
+                    }
+                }
+
+                foreach (var pair in obj)
+                {
+                    var inner = FindCertificateText(pair.Value);
+                    if (inner is not null)
+                    {
+                        return inner;
+                    }
+                }
+
+                return null;
+            case JsonArray array:
+                foreach (var item in array)
+                {
+                    var inner = FindCertificateText(item);
+                    if (inner is not null)
+                    {
+                        return inner;
+                    }
+                }
+
+                return null;
+            default:
+                return null;
+        }
+    }
 
     /// <summary>SHA-256 del DER del certificado en hex MAYÚSCULAS.</summary>
     public static string Thumbprint(string certificatePem)
