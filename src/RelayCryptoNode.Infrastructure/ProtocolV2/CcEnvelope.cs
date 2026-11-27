@@ -120,7 +120,7 @@ public static class CcEnvelope
             try
             {
                 var candidates = new List<byte[]?> { Encoding.UTF8.GetBytes(aad) };
-                var declared = Text(envelope, "aad", "aadBase64", "associatedData");
+                var declared = Text(envelope, "aad", "aadContext", "aadBase64", "associatedData");
                 if (declared is not null)
                 {
                     candidates.Add(Encoding.UTF8.GetBytes(declared));

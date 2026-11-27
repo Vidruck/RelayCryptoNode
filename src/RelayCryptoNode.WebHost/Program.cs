@@ -240,7 +240,11 @@ app.MapGet("/auth/me", (HttpContext context) => context.User.Identity?.IsAuthent
     : Results.Ok(new { user = (string?)null, name = authEnabled ? null : "Operador", enabled = authEnabled }));
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Sin caché para el panel: tras actualizar el nodo, el navegador siempre carga el HTML/JS/CSS nuevo.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate"
+});
 app.MapV2Api();
 app.MapNodeApi();
 

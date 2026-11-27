@@ -720,6 +720,15 @@ public sealed class V2NodeService
         var envelope = result.Manifest["resultEnvelope"] as JsonObject
                        ?? result.Manifest["envelope"] as JsonObject
                        ?? result.Manifest["secretEnvelope"] as JsonObject;
+        byte[]? ciphertext = result.Data;
+
+        // Algunos equipos (p. ej. EQ01) meten el sobre CC-ENV-1 completo, con ciphertextBase64, dentro de resultado.enc.
+        if (EnvelopeInData(result.Data) is { } inData)
+        {
+            envelope = inData;
+            ciphertext = null;
+        }
+
         byte[] original;
         try
         {
@@ -728,7 +737,7 @@ public sealed class V2NodeService
                 throw new V2ProtocolException("E-MANIFEST", "El resultado no trae resultEnvelope.");
             }
 
-            original = CcEnvelope.Open(envelope, result.Data, _identity.NodeId, _identity.Thumbprint, _identity.PrivateKeyPem, result.PacketId,
+            original = CcEnvelope.Open(envelope, ciphertext, _identity.NodeId, _identity.Thumbprint, _identity.PrivateKeyPem, result.PacketId,
                 (string?)result.Manifest["requestId"], source.PacketId);
         }
         catch (V2ProtocolException ex)
@@ -942,6 +951,31 @@ public sealed class V2NodeService
         }
 
         return target;
+    }
+
+    /// <summary>Si resultado.enc es un JSON con un sobre CC-ENV-1 completo (llave envuelta y texto cifrado), lo regresa.</summary>
+    private static JsonObject? EnvelopeInData(byte[] data)
+    {
+        if (data.Length < 2 || data[0] != (byte)'{')
+        {
+            return null;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(data) is JsonObject json
+                && json.Any(p => p.Key.Contains("key", StringComparison.OrdinalIgnoreCase) && p.Key.Contains("base64", StringComparison.OrdinalIgnoreCase)
+                                 || p.Key is "wrappedKey" or "encryptedKey")
+                && json.Any(p => p.Key.StartsWith("ciphertext", StringComparison.OrdinalIgnoreCase)))
+            {
+                return json;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return null;
     }
 
     /// <summary>publicParameters más el packetId real del paquete (AAD de AESGCM); no se escribe en ningún manifiesto.</summary>
