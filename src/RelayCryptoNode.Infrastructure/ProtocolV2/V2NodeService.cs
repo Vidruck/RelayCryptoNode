@@ -1070,6 +1070,17 @@ public sealed class V2NodeService
                 return new V2ProtocolException((string)problem["code"]!, $"{who} respondió {(int)status}: {(string?)problem["detail"] ?? (string?)problem["title"]}");
             }
 
+            // Otros nodos (p. ej. EQ01) mandan el código solo en "type": urn:cc:error:E-XXX o .../errors/E-XXX.
+            if (JsonNode.Parse(body) is JsonObject typed && typed["type"] is JsonValue typeValue
+                && typeValue.TryGetValue<string>(out var type))
+            {
+                var at = type.IndexOf("E-", Math.Max(type.LastIndexOf(':'), type.LastIndexOf('/')) + 1, StringComparison.Ordinal);
+                if (at >= 0)
+                {
+                    return new V2ProtocolException(type[at..], $"{who} respondió {(int)status}: {(string?)typed["detail"] ?? (string?)typed["title"]}");
+                }
+            }
+
             if (JsonNode.Parse(body) is JsonObject simple && simple["error"] is JsonValue)
             {
                 return new V2ProtocolException(Classify(status), $"{who} respondió {(int)status}: {(string?)simple["error"]}");

@@ -48,13 +48,15 @@ const AVAIL = {
 // ---------------------------------------------------------------- utilidades
 async function api(url, options = {}) {
   const response = await fetch(url, options);
-  if (response.status === 401) {
-    location.replace("/login.html");
-    throw new Error("Sesión terminada.");
-  }
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  // Solo es "sesión terminada" si el 401 viene del login del panel; un 401 con código del
+  // estándar (p. ej. E-ENV-DECRYPT o E-REQUEST-SIGNATURE de otro nodo) es un error normal.
+  if (response.status === 401 && !(body && typeof body === "object" && body.code)) {
+    location.replace("/login.html");
+    throw new Error("Sesión terminada.");
+  }
   if (!response.ok) {
     const code = body && body.code ? `${body.code}: ` : "";
     throw new Error(code + (body && (body.detail || body.error) ? (body.detail || body.error) : `HTTP ${response.status}`));
