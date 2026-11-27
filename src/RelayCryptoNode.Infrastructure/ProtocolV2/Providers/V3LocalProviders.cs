@@ -24,9 +24,12 @@ public static class V3LocalProviders
         var vault = new V3KeyVault(Path.Combine(folder, "llaves.json"));
         var registry = new AlgorithmModuleRegistry();
         var list = new List<IV2AlgorithmProvider>();
+        // AESGCM según la tabla 4.2 del estándar: clave secreta de 16/32 bytes, AAD = packetId y keyRef como EQ01.
+        list.Add(new AesGcmV3Provider(V2Catalog.ByCode("AESGCM")!, identity.NodeId, vault,
+            new SymmetricV3Provider(V2Catalog.ByCode("AESGCM")!, registry.ResolveCipherStrategy("AESGCM"), vault)));
         foreach (var code in new[]
                  {
-                     "AESGCM", "DES", "TRIPLEDES", "CHACHA20", "CAESAR", "VIGENERE", "XORASM", "MILLERRABIN",
+                     "DES", "TRIPLEDES", "CHACHA20", "CAESAR", "VIGENERE", "XORASM", "MILLERRABIN",
                      "FISHERYATES", "QUANTUMPQC", "DFTSPECTRAL", "LAGRANGESHAMIR", "LORENZSZ40"
                  })
         {
@@ -96,6 +99,17 @@ public sealed class V3KeyVault
         }
 
         return id;
+    }
+
+    /// <summary>Guarda los secretos con un keyId ya elegido (formato del estándar: EQ06-KEY-&lt;uuid&gt;).</summary>
+    public void SaveAs(string keyId, IReadOnlyDictionary<string, string> secrets)
+    {
+        lock (_gate)
+        {
+            var all = Read();
+            all[keyId] = secrets.ToDictionary(p => p.Key, p => p.Value);
+            File.WriteAllText(_path, JsonSerializer.Serialize(all));
+        }
     }
 
     /// <summary>Busca los secretos de un keyId.</summary>
@@ -462,4 +476,173 @@ internal sealed class IntegrityV3Provider : IV2AlgorithmProvider
         "SHA-384" => SHA384.HashData(data),
         _ => SHA256.HashData(data)
     };
+}
+
+/// <summary>
+/// AESGCM apegado al estándar v2.0 (tabla 4.2 y sección 12, igual que el EQ01):
+/// la clave (16 o 32 bytes en Base64) es secreta y nunca va en el manifiesto; publicParameters lleva
+/// keySizeBits, nonceBase64 (12 B), tagBase64 (16 B) y keyId; AAD = packetId en UTF-8; keyRef = { keyId, ownerNode }.
+/// El nodo guarda la clave con su keyId para poder invertir sin volver a escribirla.
+/// </summary>
+internal sealed class AesGcmV3Provider : IV2AlgorithmProvider
+{
+    /// <summary>Clave interna con el packetId real del paquete que se invierte (no viaja).</summary>
+    internal const string PacketIdHint = "__packetId";
+
+    private readonly string _nodeId;
+    private readonly V3KeyVault _vault;
+    private readonly IV2AlgorithmProvider _legacy;
+
+    public AesGcmV3Provider(V2Algorithm algorithm, string nodeId, V3KeyVault vault, IV2AlgorithmProvider legacy)
+    {
+        Algorithm = algorithm;
+        _nodeId = nodeId;
+        _vault = vault;
+        _legacy = legacy;
+    }
+
+    public V2Algorithm Algorithm { get; }
+
+    public JsonObject Profile()
+    {
+        var key = V3LocalProviders.Secret("key", "base64",
+            "Clave secreta AES en Base64 (16 o 32 bytes). Vacía = se genera y se queda guardada en el nodo; nunca va en el manifiesto");
+        key["minBytes"] = 16;
+        key["maxBytes"] = 32;
+        return V3LocalProviders.BasicProfile(
+            Algorithm,
+            new JsonArray(key),
+            new JsonArray(new JsonObject
+            {
+                ["name"] = "keySizeBits",
+                ["type"] = "enum",
+                ["values"] = new JsonArray("256", "128"),
+                ["default"] = "256"
+            }),
+            "AES-GCM según la tabla 4.2: publicParameters = keySizeBits, nonceBase64, tagBase64 y keyId; AAD = packetId.");
+    }
+
+    public V2ForwardOutput Forward(V2ForwardInput input)
+    {
+        var bits = input.Options.GetValueOrDefault("keySizeBits") is { Length: > 0 } b ? b : "256";
+        if (bits is not ("128" or "256"))
+        {
+            throw new V2ProtocolException("E-PARAMS", "keySizeBits debe ser 128 o 256.");
+        }
+
+        byte[] key;
+        if (input.Secrets.GetValueOrDefault("key") is { Length: > 0 } typed)
+        {
+            key = DecodeKey(typed);
+            bits = (key.Length * 8).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            key = RandomNumberGenerator.GetBytes(bits == "128" ? 16 : 32);
+        }
+
+        var packetId = V2Format.NewUuid();
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var tag = new byte[16];
+        var ciphertext = new byte[input.Payload.Length];
+        try
+        {
+            using (var aes = new AesGcm(key, 16))
+            {
+                aes.Encrypt(nonce, input.Payload, ciphertext, tag, Encoding.UTF8.GetBytes(packetId));
+            }
+
+            var keyId = $"{_nodeId}-KEY-{V2Format.NewUuid()}";
+            _vault.SaveAs(keyId, new Dictionary<string, string>
+            {
+                ["key"] = Convert.ToBase64String(key),
+                ["packetId"] = packetId
+            });
+            var parameters = new Dictionary<string, string>
+            {
+                ["keySizeBits"] = bits,
+                ["nonceBase64"] = Convert.ToBase64String(nonce),
+                ["tagBase64"] = Convert.ToBase64String(tag),
+                ["keyId"] = keyId
+            };
+            var keyRef = new JsonObject { ["keyId"] = keyId, ["ownerNode"] = _nodeId };
+            return new V2ForwardOutput(ciphertext, parameters, input.PayloadMode, Algorithm.Name, packetId, keyRef);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    public V2InverseOutput Inverse(byte[] data, IReadOnlyDictionary<string, string> publicParameters, IReadOnlyDictionary<string, string> secrets)
+    {
+        // Paquetes v3 viejos (ivBase64 + clave derivada): se siguen abriendo como antes.
+        if (publicParameters.ContainsKey("ivBase64") && publicParameters.GetValueOrDefault("mode") == "v3-local")
+        {
+            return _legacy.Inverse(data, publicParameters, secrets);
+        }
+
+        var stored = _vault.Find(publicParameters.GetValueOrDefault("keyId"));
+        var keyText = secrets.GetValueOrDefault("key") is { Length: > 0 } typed ? typed : stored?.GetValueOrDefault("key");
+        if (string.IsNullOrEmpty(keyText))
+        {
+            throw new V2ProtocolException("E-KEY-NOT-FOUND", "Este nodo no tiene la clave de ese paquete: escríbela en el campo key (Base64 de 16 o 32 bytes).");
+        }
+
+        var key = DecodeKey(keyText);
+        try
+        {
+            var nonce = Convert.FromBase64String(Param(publicParameters, "nonceBase64", "nonce", "ivBase64", "iv"));
+            var tag = Convert.FromBase64String(Param(publicParameters, "tagBase64", "tag"));
+            var aads = new[] { stored?.GetValueOrDefault("packetId"), publicParameters.GetValueOrDefault(PacketIdHint), string.Empty }
+                .Where(a => a is not null).Distinct().ToList();
+            using var aes = new AesGcm(key, tag.Length);
+            var plaintext = new byte[data.Length];
+            foreach (var aad in aads)
+            {
+                try
+                {
+                    aes.Decrypt(nonce, data, tag, plaintext, Encoding.UTF8.GetBytes(aad!));
+                    return new V2InverseOutput(plaintext);
+                }
+                catch (CryptographicException)
+                {
+                }
+            }
+
+            throw new V2ProtocolException("E-PARAMS", "No se pudo descifrar: la clave no corresponde a ese paquete.");
+        }
+        catch (FormatException)
+        {
+            throw new V2ProtocolException("E-PARAMS", "nonceBase64 o tagBase64 no son Base64 válido.");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    private static string Param(IReadOnlyDictionary<string, string> p, params string[] names) =>
+        names.Select(p.GetValueOrDefault).FirstOrDefault(v => !string.IsNullOrEmpty(v))
+        ?? throw new V2ProtocolException("E-PARAMS", $"Falta {names[0]} en publicParameters.");
+
+    private static byte[] DecodeKey(string text)
+    {
+        byte[] key;
+        try
+        {
+            key = Convert.FromBase64String(text.Trim());
+        }
+        catch (FormatException)
+        {
+            throw new V2ProtocolException("E-PARAMS", "La clave debe ir en Base64 (16 o 32 bytes).");
+        }
+
+        if (key.Length is not (16 or 32))
+        {
+            throw new V2ProtocolException("E-PARAMS", $"La clave mide {key.Length} bytes; el estándar pide 16 o 32.");
+        }
+
+        return key;
+    }
 }

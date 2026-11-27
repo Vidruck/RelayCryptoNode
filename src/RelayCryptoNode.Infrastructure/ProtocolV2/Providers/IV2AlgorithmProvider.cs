@@ -22,11 +22,15 @@ public sealed record V2ForwardInput(
 /// <param name="PublicParameters">Parámetros públicos del manifiesto.</param>
 /// <param name="PayloadMode">Modo final de la carga (por ejemplo <c>image</c>).</param>
 /// <param name="AlgorithmName">Variante usada.</param>
+/// <param name="PacketId">packetId fijo cuando el cifrado depende de él (AAD de AESGCM, tabla 4.2).</param>
+/// <param name="KeyRef">keyRef del manifiesto (<c>keyId</c> y <c>ownerNode</c>) cuando el dueño guarda la llave.</param>
 public sealed record V2ForwardOutput(
     byte[] Data,
     Dictionary<string, string> PublicParameters,
     string PayloadMode,
-    string AlgorithmName);
+    string AlgorithmName,
+    string? PacketId = null,
+    JsonObject? KeyRef = null);
 
 /// <summary>Salida de <c>inverse</c>.</summary>
 /// <param name="Original">Bytes recuperados.</param>

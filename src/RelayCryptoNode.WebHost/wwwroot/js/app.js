@@ -268,7 +268,8 @@ function fieldHtml(field, prefix, secret) {
   }
   const placeholder = field.type === "base64" ? `Base64 de ${field.bytes || "N"} bytes` : field.type === "integer" ? "número entero" : field.optional ? "opcional" : "";
   const input = `<input data-name="${field.name}" id="${id}" ${secret ? 'type="password"' : ""} value="${esc(field.default || "")}" placeholder="${placeholder}" autocomplete="off">`;
-  const gen = field.type === "base64" ? `<button class="btn sm gold" type="button" data-gen="${id}" data-bytes="${field.bytes || 32}">Generar</button>` : "";
+  const gen = (field.type === "base64" ? `<button class="btn sm gold" type="button" data-gen="${id}" data-bytes="${field.bytes || 32}">Generar</button>` : "")
+    + (secret ? `<button class="btn sm" type="button" data-peek="${id}" title="Mostrar u ocultar la clave">Ver</button>` : "");
   const label = `${esc(field.name)}${field.optional ? " (opcional)" : ""}${field.description ? ` · ${esc(field.description)}` : ""}`;
   return gen ? `<label>${label}<div class="field-row">${input}${gen}</div></label>` : `<label>${label}${input}</label>`;
 }
@@ -277,7 +278,13 @@ function bindGenerators(root) {
   root.querySelectorAll("[data-gen]").forEach((b) => b.addEventListener("click", () => {
     const input = root.querySelector(`#${b.dataset.gen}`);
     input.value = b64(Number(b.dataset.bytes));
-    input.type = "text";
+    // La clave es secreta (tabla 4.2): se genera sin mostrarla; usa "Ver" si la necesitas copiar.
+  }));
+  root.querySelectorAll("[data-peek]").forEach((b) => b.addEventListener("click", () => {
+    const input = root.querySelector(`#${b.dataset.peek}`);
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    b.textContent = show ? "Ocultar" : "Ver";
   }));
 }
 
@@ -616,10 +623,14 @@ function sendDialog(id) {
 async function inverseDialog(record) {
   const algo = state.overview.catalog.find((a) => a.code === record.algorithmCode);
   const params = normalizeProfile(algo.code, await profileFor(algo));
+  const self = state.overview?.nodeId;
+  const foreign = !!record.producerNode && record.producerNode !== self;
   const secrets = params.secrets.length ? params.secrets.map((f) => fieldHtml(f, "isec", true)).join("") : '<p class="hint">No requiere secretos.</p>';
   const body = modal(`Invertir · ${algo.code} (${algo.inverseName})`, `
     <form class="form" id="invForm">
-      <p class="hint">Lo ejecuta <b class="gold">${esc(algo.provider || algo.owner || "—")}</b>${algo.local ? " (local)" : " (delegado)"}. El resultado regresa cifrado para ti en un sobre CC-ENV-1.</p>
+      ${foreign
+        ? `<p class="hint">Lo ejecuta <b class="gold">${esc(record.producerNode)}</b> (dueño del paquete). Deja la clave vacía: el dueño usa la que guardó con su keyId. El resultado regresa cifrado para ti en un sobre CC-ENV-1.</p>`
+        : `<p class="hint">Lo ejecuta <b class="gold">${esc(algo.provider || algo.owner || "—")}</b>${algo.local ? " (local)" : " (delegado)"}. Si el paquete es tuyo puedes dejar la clave vacía: el nodo la guardó con su keyId.</p>`}
       <fieldset class="params secret"><legend>Secretos</legend>${secrets}</fieldset>
       <div class="row-actions"><button class="btn primary" type="submit">Ejecutar inverse</button></div>
     </form>

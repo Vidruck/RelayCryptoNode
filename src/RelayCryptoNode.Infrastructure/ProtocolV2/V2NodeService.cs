@@ -573,6 +573,8 @@ public sealed class V2NodeService
                     secrets)), timeout.Token).ConfigureAwait(false);
                 var package = V2PackageCodec.Build(new V2PackageSpec
                 {
+                    PacketId = output.PacketId,
+                    KeyRef = output.KeyRef,
                     RequestId = requestId,
                     Algorithm = algorithm,
                     AlgorithmName = output.AlgorithmName,
@@ -605,7 +607,7 @@ public sealed class V2NodeService
                 throw new V2ProtocolException("E-PARAMS", "El paquete es de otro algoritmo que el indicado en la petición.");
             }
 
-            var inverse = await Task.Run(() => provider.Inverse(incoming.Data, incoming.PublicParameters, secrets), timeout.Token).ConfigureAwait(false);
+            var inverse = await Task.Run(() => provider.Inverse(incoming.Data, WithPacketId(incoming), secrets), timeout.Token).ConfigureAwait(false);
             var result = BuildResult(incoming, algorithm, requestId, requester, requesterCert, inverse);
             await Log("provider.inverse", $"{requester} pidió {algorithm.Code} {algorithm.InverseName} de {incoming.FileName}: resultado cifrado para {requester}.").ConfigureAwait(false);
             return result;
@@ -646,6 +648,8 @@ public sealed class V2NodeService
             var output = own.Forward(new V2ForwardInput(payload, cover, payloadMode, fileName, options, secrets));
             package = V2PackageCodec.Build(new V2PackageSpec
             {
+                PacketId = output.PacketId,
+                KeyRef = output.KeyRef,
                 Algorithm = algorithm,
                 AlgorithmName = output.AlgorithmName,
                 Operation = "forward",
@@ -698,7 +702,7 @@ public sealed class V2NodeService
         if (own is not null && (providerNode is null || providerNode == _identity.NodeId))
         {
             var requestId = V2Format.NewUuid();
-            var inverse = own.Inverse(source.Data, source.PublicParameters, secrets);
+            var inverse = own.Inverse(source.Data, WithPacketId(source), secrets);
             result = BuildResult(source, algorithm, requestId, _identity.NodeId, _identity.CertificatePem, inverse);
             provider = _identity.NodeId;
         }
@@ -938,6 +942,21 @@ public sealed class V2NodeService
         }
 
         return target;
+    }
+
+    /// <summary>publicParameters más el packetId real del paquete (AAD de AESGCM); no se escribe en ningún manifiesto.</summary>
+    private static Dictionary<string, string> WithPacketId(V2Package package)
+    {
+        var copy = new Dictionary<string, string>(package.PublicParameters, StringComparer.Ordinal)
+        {
+            [RelayCryptoNode.Infrastructure.ProtocolV2.Providers.AesGcmV3Provider.PacketIdHint] = package.PacketId
+        };
+        if (string.IsNullOrEmpty(copy.GetValueOrDefault("keyId")) && KeyIdOf(package) is { } keyId)
+        {
+            copy["keyId"] = keyId;
+        }
+
+        return copy;
     }
 
     /// <summary>
