@@ -658,7 +658,7 @@ public sealed class V2NodeService
             // El dueño valida la ventana de ±10 min: se reempaqueta con fecha nueva y firma propia (9.6).
             var fresh = V2PackageCodec.Rewrap(source, _identity);
             result = await DelegateAsync(target, algorithm, "inverse", source.Str("payloadMode"), source.Str("originalFileName"),
-                new Dictionary<string, string>(), secrets, null, null, fresh.ZipBytes, ct).ConfigureAwait(false);
+                new Dictionary<string, string>(), secrets, null, null, fresh.ZipBytes, ct, KeyIdOf(source)).ConfigureAwait(false);
             provider = target.NodeId;
             delegated = true;
         }
@@ -869,6 +869,22 @@ public sealed class V2NodeService
         return target;
     }
 
+    /// <summary>
+    /// keyId del paquete (keyRef.keyId, o publicParameters.keyId si no hay keyRef): el dueño lo usa en inverse
+    /// para encontrar la llave que guardó al cifrar (13.2).
+    /// </summary>
+    private static string? KeyIdOf(V2Package source)
+    {
+        var fromRef = source.Manifest["keyRef"] is JsonObject keyRef && keyRef["keyId"] is JsonValue v && v.TryGetValue<string>(out var id) ? id : null;
+        if (!string.IsNullOrWhiteSpace(fromRef))
+        {
+            return fromRef;
+        }
+
+        var fromParams = source.PublicParameters.GetValueOrDefault("keyId");
+        return string.IsNullOrWhiteSpace(fromParams) ? null : fromParams;
+    }
+
     private async Task<V2Package> DelegateAsync(
         DirectoryEntry target,
         V2Algorithm algorithm,
@@ -880,7 +896,8 @@ public sealed class V2NodeService
         byte[]? payload,
         byte[]? cover,
         byte[]? package,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? keyId = null)
     {
         var targetCert = await FetchCertificateAsync(target, ct).ConfigureAwait(false);
         if (V2Format.Thumbprint(targetCert) != target.PinnedThumbprintSha256)
@@ -919,7 +936,7 @@ public sealed class V2NodeService
             ["payloadMode"] = payloadMode,
             ["originalFileName"] = fileName,
             ["options"] = optionsJson,
-            ["keyId"] = null,
+            ["keyId"] = string.IsNullOrEmpty(keyId) ? null : keyId,
             ["secrets"] = secretsEnvelope
         };
         var requestBytes = Encoding.UTF8.GetBytes(request.ToJsonString());
