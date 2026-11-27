@@ -13,7 +13,8 @@ namespace RelayCryptoNode.Infrastructure.Algorithms.Steganography;
 /// </summary>
 public sealed class LsbStegoModule : ISymmetricCipherStrategy, ISteganographyPort
 {
-    private const uint MagicHeader = 0x52434E53; // "RCNS"
+    private const uint MagicHeader = 0x4C534243; // "LSBC" (mismo formato que EQ01)
+    private const uint LegacyMagicHeader = 0x52434E53; // "RCNS" (imágenes anteriores del EQ06)
     private const string DomainLabel = "LSBSTEGO";
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
     private static readonly uint[] CrcTable = BuildCrc32Table();
@@ -170,6 +171,108 @@ public sealed class LsbStegoModule : ISymmetricCipherStrategy, ISteganographyPor
         return packet;
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Formato compatible con EQ01 (ModuloCrypto): cabecera "LSBC" + longitud int32 big-endian,
+    // bits del más significativo al menos significativo, 1 bit por canal en orden R, G, B
+    // (sin alfa), píxeles de arriba hacia abajo y de izquierda a derecha.
+    // La lectura también acepta las imágenes anteriores (cabecera "RCNS" en bytes crudos).
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Mapa canal lógico (R,G,B por píxel, de arriba a abajo) → posición del byte en el arreglo.</summary>
+    private readonly record struct ChannelMap(int Channels, Func<int, int> Offset);
+
+    private static ChannelMap PngMap(int width, int height, int bytesPerPixel) =>
+        new(width * height * 3, i => ((i / 3) * bytesPerPixel) + (i % 3));
+
+    private static ChannelMap BmpMap(byte[] bmp, out int pixelOffset)
+    {
+        pixelOffset = BinaryPrimitives.ReadInt32LittleEndian(bmp.AsSpan(10, 4));
+        var width = BinaryPrimitives.ReadInt32LittleEndian(bmp.AsSpan(18, 4));
+        var rawHeight = BinaryPrimitives.ReadInt32LittleEndian(bmp.AsSpan(22, 4));
+        var bitsPerPixel = BinaryPrimitives.ReadInt16LittleEndian(bmp.AsSpan(28, 2));
+        if (pixelOffset < 54 || pixelOffset >= bmp.Length || width <= 0 || rawHeight == 0 || bitsPerPixel is not (24 or 32))
+        {
+            throw new DomainException("Solo se soportan BMP de 24 o 32 bits sin compresión.", "STEGO_INVALID_BMP");
+        }
+
+        var height = Math.Abs(rawHeight);
+        var topDown = rawHeight < 0;
+        var bpp = bitsPerPixel / 8;
+        var stride = ((width * bpp) + 3) & ~3;
+        if (pixelOffset + ((long)stride * height) > bmp.Length)
+        {
+            throw new DomainException("Archivo BMP truncado.", "STEGO_INVALID_BMP");
+        }
+
+        var start = pixelOffset;
+        return new ChannelMap(width * height * 3, i =>
+        {
+            var pixel = i / 3;
+            var x = pixel % width;
+            var y = pixel / width;
+            var row = topDown ? y : height - 1 - y;
+            return start + (row * stride) + (x * bpp) + (2 - (i % 3)); // BMP guarda B,G,R
+        });
+    }
+
+    private static void WriteMapped(Span<byte> target, ChannelMap map, ReadOnlySpan<byte> packet)
+    {
+        if ((long)packet.Length * 8 > map.Channels)
+        {
+            throw new DomainException("La imagen es demasiado pequeña para ocultar la carga útil.", "STEGO_CAPACITY_EXCEEDED");
+        }
+
+        var bitIndex = 0;
+        foreach (var dataByte in packet)
+        {
+            for (var bit = 7; bit >= 0; bit--)
+            {
+                var at = map.Offset(bitIndex++);
+                target[at] = (byte)((target[at] & 0xFE) | ((dataByte >> bit) & 1));
+            }
+        }
+    }
+
+    private static byte[] ReadMapped(ReadOnlySpan<byte> source, ChannelMap map, int startBit, int count)
+    {
+        var result = new byte[count];
+        var bitIndex = startBit;
+        for (var i = 0; i < count; i++)
+        {
+            byte value = 0;
+            for (var bit = 7; bit >= 0; bit--)
+            {
+                value |= (byte)((source[map.Offset(bitIndex++)] & 1) << bit);
+            }
+
+            result[i] = value;
+        }
+
+        return result;
+    }
+
+    /// <summary>Lee la carga con el formato nuevo (LSBC por píxel); si no está, prueba el formato anterior (RCNS en bytes crudos).</summary>
+    private static byte[] ReadAnyPacket(ReadOnlySpan<byte> pixels, ChannelMap map, ReadOnlySpan<byte> legacyBytes)
+    {
+        if (map.Channels >= 64)
+        {
+            var header = ReadMapped(pixels, map, 0, 8);
+            var magic = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(0, 4));
+            if (magic is MagicHeader or LegacyMagicHeader)
+            {
+                var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(4, 4));
+                if (length < 0 || ((long)length + 8) * 8 > map.Channels)
+                {
+                    throw new DecryptionFailedException("Longitud de carga esteganográfica inválida o truncada.", CipherAlgorithmType.LsbStego);
+                }
+
+                return ReadMapped(pixels, map, 64, length);
+            }
+        }
+
+        return ReadLsbPacket(legacyBytes);
+    }
+
     private static byte[] EmbedInBmp(byte[] bmpBytes, byte[] packet)
     {
         if (bmpBytes.Length < 54)
@@ -177,20 +280,9 @@ public sealed class LsbStegoModule : ISymmetricCipherStrategy, ISteganographyPor
             throw new DomainException("Archivo BMP inválido o truncado.", "STEGO_INVALID_BMP");
         }
 
-        var pixelOffset = BinaryPrimitives.ReadInt32LittleEndian(bmpBytes.AsSpan(10, 4));
-        if (pixelOffset < 54 || pixelOffset >= bmpBytes.Length)
-        {
-            throw new DomainException("Offset de píxeles BMP inválido.", "STEGO_INVALID_BMP");
-        }
-
-        var availableBytes = bmpBytes.Length - pixelOffset;
-        if (packet.Length * 8 > availableBytes)
-        {
-            throw new DomainException("La imagen BMP es demasiado pequeña para ocultar la carga útil.", "STEGO_CAPACITY_EXCEEDED");
-        }
-
+        var map = BmpMap(bmpBytes, out _);
         var output = bmpBytes.ToArray();
-        WriteLsbBits(output.AsSpan(pixelOffset), packet);
+        WriteMapped(output, map, packet);
         return output;
     }
 
@@ -201,13 +293,8 @@ public sealed class LsbStegoModule : ISymmetricCipherStrategy, ISteganographyPor
             throw new DomainException("Archivo BMP inválido o truncado.", "STEGO_INVALID_BMP");
         }
 
-        var pixelOffset = BinaryPrimitives.ReadInt32LittleEndian(bmpBytes.AsSpan(10, 4));
-        if (pixelOffset < 54 || bmpBytes.Length - pixelOffset < 64)
-        {
-            throw new DomainException("Imagen BMP sin capacidad mínima para cabecera esteganográfica.", "STEGO_INVALID_BMP");
-        }
-
-        return ReadLsbPacket(bmpBytes.AsSpan(pixelOffset));
+        var map = BmpMap(bmpBytes, out var pixelOffset);
+        return ReadAnyPacket(bmpBytes, map, bmpBytes.AsSpan(pixelOffset));
     }
 
     private static byte[] EmbedInPng(byte[] pngBytes, byte[] packet)
@@ -232,15 +319,9 @@ public sealed class LsbStegoModule : ISymmetricCipherStrategy, ISteganographyPor
             throw new DomainException("Dimensiones de datos IDAT inválidas en PNG.", "STEGO_INVALID_PNG");
         }
 
-        var pixelChannelBytes = parsed.Width * parsed.Height * bytesPerPixel;
-        if (packet.Length * 8 > pixelChannelBytes)
-        {
-            throw new DomainException("La imagen PNG es demasiado pequeña para ocultar la carga útil.", "STEGO_CAPACITY_EXCEEDED");
-        }
-
         // Reconstruir píxeles filtrados sin pérdida (forzando filter=0 para preservar LSB exacto tras re-empaquetado)
         var unencodedPixels = UnfilterScanlines(rawPixels, parsed.Width, parsed.Height, bytesPerPixel);
-        WriteLsbBits(unencodedPixels, packet);
+        WriteMapped(unencodedPixels, PngMap(parsed.Width, parsed.Height, bytesPerPixel), packet);
 
         var scanlines = new byte[stride * parsed.Height];
         for (var y = 0; y < parsed.Height; y++)
@@ -266,21 +347,7 @@ public sealed class LsbStegoModule : ISymmetricCipherStrategy, ISteganographyPor
 
         var rawPixels = DecompressZlib(parsed.CompressedIdat);
         var unencodedPixels = UnfilterScanlines(rawPixels, parsed.Width, parsed.Height, bytesPerPixel);
-        return ReadLsbPacket(unencodedPixels);
-    }
-
-    private static void WriteLsbBits(Span<byte> carrierBytes, ReadOnlySpan<byte> packet)
-    {
-        var bitIndex = 0;
-        foreach (var dataByte in packet)
-        {
-            for (var bit = 7; bit >= 0; bit--)
-            {
-                var bitValue = (byte)((dataByte >> bit) & 1);
-                carrierBytes[bitIndex] = (byte)((carrierBytes[bitIndex] & 0xFE) | bitValue);
-                bitIndex++;
-            }
-        }
+        return ReadAnyPacket(unencodedPixels, PngMap(parsed.Width, parsed.Height, bytesPerPixel), unencodedPixels);
     }
 
     private static byte[] ReadLsbPacket(ReadOnlySpan<byte> carrierBytes)
@@ -294,13 +361,13 @@ public sealed class LsbStegoModule : ISymmetricCipherStrategy, ISteganographyPor
         ReadLsbBytes(carrierBytes, header, 0);
 
         var magic = BinaryPrimitives.ReadUInt32BigEndian(header[..4]);
-        if (magic != MagicHeader)
+        if (magic is not (MagicHeader or LegacyMagicHeader))
         {
             throw new DecryptionFailedException("No se encontró firma esteganográfica LSBSTEGO válida.", CipherAlgorithmType.LsbStego);
         }
 
         var payloadLength = BinaryPrimitives.ReadInt32BigEndian(header[4..8]);
-        if (payloadLength < 0 || (8 + payloadLength) * 8 > carrierBytes.Length)
+        if (payloadLength < 0 || ((long)payloadLength + 8) * 8 > carrierBytes.Length)
         {
             throw new DecryptionFailedException("Longitud de carga esteganográfica inválida o truncada.", CipherAlgorithmType.LsbStego);
         }

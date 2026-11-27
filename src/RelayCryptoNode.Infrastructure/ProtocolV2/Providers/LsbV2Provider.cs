@@ -70,8 +70,8 @@ public sealed class LsbV2Provider : IV2AlgorithmProvider
             new Dictionary<string, string>
             {
                 ["bitsPerChannel"] = "1",
-                ["channels"] = format == "PNG" && IsRgbaPng(input.Cover) ? "RGBA" : "RGB",
-                ["header"] = "RCNS-BE32",
+                ["channels"] = "RGB",
+                ["header"] = "LSBC-BE32",
                 ["imageFormat"] = format,
                 ["passwordProtected"] = protectedPayload ? "true" : "false",
                 ["payloadLengthBytes"] = payload.Length.ToString(CultureInfo.InvariantCulture)
@@ -121,7 +121,6 @@ public sealed class LsbV2Provider : IV2AlgorithmProvider
         throw new V2ProtocolException("E-PARAMS", "La portadora debe ser PNG o BMP.");
     }
 
-    private static bool IsRgbaPng(byte[] png) => png.Length > 25 && png[25] == 6;
 
     private static byte[] Encrypt(byte[] payload, string password)
     {
