@@ -54,46 +54,144 @@ public static class CcEnvelope
 
     /// <summary>
     /// Abre un sobre. Si <paramref name="ciphertext"/> es nulo se toma <c>ciphertextBase64</c> del sobre.
+    /// Es tolerante con otros equipos: acepta nombres de campo distintos (wrappedKey/encryptedKey, nonce/iv,
+    /// tag/authTag), tag pegado al final del texto cifrado, OAEP con SHA-256 o SHA-1 y varios AAD posibles.
     /// </summary>
-    public static byte[] Open(JsonObject envelope, byte[]? ciphertext, string ownNodeId, string ownThumbprint, string privateKeyPem, string aad)
+    public static byte[] Open(JsonObject envelope, byte[]? ciphertext, string ownNodeId, string ownThumbprint, string privateKeyPem, string aad,
+        params string?[] otherAads)
     {
         ArgumentNullException.ThrowIfNull(envelope);
-        if ((string?)envelope["envelope"] != Name)
+        var name = Text(envelope, "envelope", "scheme", "format", "type", "alg", "algorithm", "version");
+        var wrappedText = Text(envelope, "wrappedKeyBase64", "wrappedKey", "encryptedKeyBase64", "encryptedKey", "wrappedCekBase64", "wrappedCek",
+            "encryptedCekBase64", "encryptedCek", "cekBase64", "cek", "ek", "keyBase64", "key");
+        if (wrappedText is null && name is not null && !name.Contains("CC-ENV", StringComparison.OrdinalIgnoreCase))
         {
             throw new V2ProtocolException("E-ENV-DECRYPT", "El sobre no es CC-ENV-1.");
         }
 
-        if ((string?)envelope["recipientNode"] != ownNodeId
-            || !string.Equals((string?)envelope["recipientThumbprintSha256"], ownThumbprint, StringComparison.Ordinal))
+        if (wrappedText is null)
+        {
+            throw new V2ProtocolException("E-ENV-DECRYPT", $"El sobre no trae la llave envuelta. Campos: {string.Join(", ", envelope.Select(p => p.Key))}.");
+        }
+
+        var recipient = Text(envelope, "recipientNode", "recipient", "to", "targetNode");
+        var thumb = Text(envelope, "recipientThumbprintSha256", "recipientThumbprint", "thumbprint");
+        if ((recipient is not null && !string.Equals(recipient, ownNodeId, StringComparison.OrdinalIgnoreCase))
+            || (thumb is not null && !string.Equals(thumb, ownThumbprint, StringComparison.OrdinalIgnoreCase)))
         {
             throw new V2ProtocolException("E-ENV-RECIPIENT", "El sobre no está dirigido a este nodo.");
         }
 
         try
         {
-            var wrapped = Convert.FromBase64String((string?)envelope["wrappedKeyBase64"] ?? string.Empty);
-            var nonce = Convert.FromBase64String((string?)envelope["nonceBase64"] ?? string.Empty);
-            var tag = Convert.FromBase64String((string?)envelope["tagBase64"] ?? string.Empty);
-            var data = ciphertext ?? Convert.FromBase64String((string?)envelope["ciphertextBase64"] ?? string.Empty);
+            var wrapped = Bytes(wrappedText);
+            var nonce = Bytes(Text(envelope, "nonceBase64", "nonce", "ivBase64", "iv") ?? string.Empty);
+            var tagText = Text(envelope, "tagBase64", "tag", "authTagBase64", "authTag");
+            var data = ciphertext ?? Bytes(Text(envelope, "ciphertextBase64", "ciphertext", "dataBase64", "data") ?? string.Empty);
+            byte[] tag;
+            if (tagText is not null)
+            {
+                tag = Bytes(tagText);
+            }
+            else
+            {
+                // Tag pegado al final del texto cifrado (como lo hacen Java, Python y WebCrypto).
+                if (data.Length < 16)
+                {
+                    throw new FormatException();
+                }
+
+                tag = data[^16..];
+                data = data[..^16];
+            }
+
             using var rsa = RSA.Create();
             rsa.ImportFromPem(privateKeyPem);
-            var cek = rsa.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
+            byte[] cek;
             try
             {
+                cek = rsa.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
+            }
+            catch (CryptographicException)
+            {
+                cek = rsa.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA1);
+            }
+
+            try
+            {
+                var candidates = new List<byte[]?> { Encoding.UTF8.GetBytes(aad) };
+                var declared = Text(envelope, "aad", "aadBase64", "associatedData");
+                if (declared is not null)
+                {
+                    candidates.Add(Encoding.UTF8.GetBytes(declared));
+                }
+
+                foreach (var other in otherAads)
+                {
+                    if (!string.IsNullOrEmpty(other))
+                    {
+                        candidates.Add(Encoding.UTF8.GetBytes(other));
+                    }
+                }
+
+                candidates.Add(Array.Empty<byte>());
+                candidates.Add(null);
+                using var aes = new AesGcm(cek, tag.Length);
                 var plaintext = new byte[data.Length];
-                using var aes = new AesGcm(cek, 16);
-                aes.Decrypt(nonce, data, tag, plaintext, Encoding.UTF8.GetBytes(aad));
-                return plaintext;
+                foreach (var candidate in candidates)
+                {
+                    try
+                    {
+                        aes.Decrypt(nonce, data, tag, plaintext, candidate);
+                        return plaintext;
+                    }
+                    catch (CryptographicException)
+                    {
+                    }
+                }
+
+                throw new CryptographicException("Ningún AAD coincidió.");
             }
             finally
             {
                 CryptographicOperations.ZeroMemory(cek);
             }
         }
-        catch (Exception ex) when (ex is CryptographicException or FormatException)
+        catch (Exception ex) when (ex is CryptographicException or FormatException or ArgumentException)
         {
             throw new V2ProtocolException("E-ENV-DECRYPT", "No se pudo abrir el sobre CC-ENV-1.");
         }
+    }
+
+    private static string? Text(JsonObject node, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            foreach (var pair in node)
+            {
+                if (string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase) && pair.Value is JsonValue value
+                    && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Base64 (normal o URL) o hex.</summary>
+    private static byte[] Bytes(string text)
+    {
+        var t = text.Trim();
+        if (t.Length % 2 == 0 && t.All(Uri.IsHexDigit))
+        {
+            return Convert.FromHexString(t);
+        }
+
+        t = t.Replace('-', '+').Replace('_', '/');
+        t = t.PadRight(t.Length + ((4 - (t.Length % 4)) % 4), '=');
+        return Convert.FromBase64String(t);
     }
 
     /// <summary>Copia del sobre sin <c>ciphertextBase64</c> (para <c>resultEnvelope</c>).</summary>
