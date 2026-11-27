@@ -189,7 +189,10 @@
         </div>
       </div>
       <article class="panel">
-        <h2 class="ptitle">Paquetes v2.0</h2>
+        <div class="phead">
+          <h2 class="ptitle">Paquetes v2.0</h2>
+          <button class="btn sm danger" type="button" id="clearInbox" title="Quita de la bandeja los paquetes v2.0 y los rechazados; todo queda en el Histórico (07 Bitácora)">Borrar recibidos</button>
+        </div>
         <div class="table-wrap">
           <table class="table">
             <thead><tr><th>Recibido</th><th>Origen</th><th>Paquete</th><th>Algoritmo</th><th>Validación</th><th>Estado</th><th></th></tr></thead>
@@ -314,6 +317,19 @@
       <article class="panel terminal">
         <h2 class="ptitle">Bitácora en vivo</h2>
         <ul class="log" id="logList"></ul>
+      </article>
+      <article class="panel">
+        <div class="phead">
+          <h2 class="ptitle">Histórico <span class="hint">(todo lo recibido y generado; lo borrado de la vista se queda aquí)</span></h2>
+          <button class="btn sm" type="button" id="histReload">Actualizar</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Fecha</th><th>Tipo</th><th>Paquete</th><th>Algoritmo</th><th>Emisor</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="histBody"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="histEmpty">El histórico está vacío.</p>
       </article>
     </section>
   </main>

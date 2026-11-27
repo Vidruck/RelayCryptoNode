@@ -352,3 +352,7 @@ input[type=file]::file-selector-button { background: var(--purple-lo); color: va
 .lock-toggle.turning .lock-icon { animation: lock-jolt .45s; }
 @keyframes lock-jolt { 30% { transform: rotate(-10deg); } 60% { transform: rotate(7deg); } }
 @media (prefers-reduced-motion: reduce) { .lock-icon .shackle { transition: none; } .lock-toggle.turning .lock-icon { animation: none; } }
+
+/* Quitar de la vista (la fila se queda en el histórico) */
+.btn.x-del { min-width: 28px; font-size: 15px; line-height: 1; padding: 3px 8px; }
+.table tr.row-muted td { opacity: 0.55; }

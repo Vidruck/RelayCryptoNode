@@ -315,6 +315,18 @@ public static class V2Api
         ui.MapPost("/solicitudes/{id}/reject", (string id, V2NodeService node) => Results.Ok(node.Reject(id)));
 
         ui.MapGet("/consultas", (V2NodeService node) => Results.Ok(node.Store.List("consulta")));
+
+        // Borrar de la vista (la X de cada fila) y vaciar Recibidos: nada se borra del disco, todo pasa al histórico.
+        ui.MapDelete("/packets/{id}", async (string id, V2NodeService node) => Results.Ok(await node.HideAsync(id)));
+        ui.MapPost("/packets/{id}/restore", async (string id, V2NodeService node) => Results.Ok(await node.RestoreAsync(id)));
+        ui.MapPost("/solicitudes/clear", async (V2NodeService node) => Results.Ok(new { cleared = await node.ClearInboxAsync() }));
+        ui.MapGet("/historico", (V2NodeService node) => Results.Ok(new
+        {
+            packets = node.Store.ListAll(),
+            refused = node.Refused.Select(r => new { r.ReceivedUtc, r.SourceIp, r.SourceNode, r.AlgorithmCode, r.FileName, r.Code, r.Reason, hidden = false })
+                .Concat(node.RefusedHistory.Select(r => new { r.ReceivedUtc, r.SourceIp, r.SourceNode, r.AlgorithmCode, r.FileName, r.Code, r.Reason, hidden = true }))
+                .OrderByDescending(r => r.ReceivedUtc)
+        }));
         ui.MapGet("/packets/{id}/zip", (string id, V2NodeService node) =>
             Results.File(node.Store.ZipBytes(id), "application/zip", node.Store.Get(id).FileName));
         ui.MapGet("/packets/{id}/manifest", (string id, V2NodeService node) =>

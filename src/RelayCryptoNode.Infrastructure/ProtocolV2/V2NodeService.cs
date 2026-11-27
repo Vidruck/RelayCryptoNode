@@ -145,6 +145,56 @@ public sealed class V2NodeService
     }
 
     private readonly List<RefusedPacket> _refused = new();
+    private readonly List<RefusedPacket> _refusedHistory = new();
+
+    /// <summary>Rechazados que ya se borraron de la bandeja (histórico; solo en memoria).</summary>
+    public IReadOnlyList<RefusedPacket> RefusedHistory
+    {
+        get
+        {
+            lock (_refused)
+            {
+                return _refusedHistory.ToList();
+            }
+        }
+    }
+
+    /// <summary>Borra un paquete de la vista; queda en el histórico.</summary>
+    public async Task<PacketRecord> HideAsync(string id)
+    {
+        var record = _store.SetHidden(id, true);
+        await Log("historico", $"Se quitó de la vista {record.FileName} ({record.Origin}); sigue en el histórico.").ConfigureAwait(false);
+        return record;
+    }
+
+    /// <summary>Regresa a la vista un paquete del histórico.</summary>
+    public async Task<PacketRecord> RestoreAsync(string id)
+    {
+        var record = _store.SetHidden(id, false);
+        await Log("historico", $"Se restauró {record.FileName} desde el histórico.").ConfigureAwait(false);
+        return record;
+    }
+
+    /// <summary>Vacía la bandeja de recibidos (paquetes v2 y rechazados); todo queda en el histórico.</summary>
+    public async Task<int> ClearInboxAsync()
+    {
+        var count = 0;
+        foreach (var record in _store.List("solicitud"))
+        {
+            _store.SetHidden(record.Id, true);
+            count++;
+        }
+
+        lock (_refused)
+        {
+            count += _refused.Count;
+            _refusedHistory.InsertRange(0, _refused);
+            _refused.Clear();
+        }
+
+        await Log("historico", $"Se vació la bandeja de recibidos ({count} elementos); todo sigue en el histórico.").ConfigureAwait(false);
+        return count;
+    }
 
     /// <summary>Últimos paquetes que llegaron y se rechazaron (para la bandeja de recibidos).</summary>
     public IReadOnlyList<RefusedPacket> Refused
@@ -664,8 +714,29 @@ public sealed class V2NodeService
         }
 
         var envelope = result.Manifest["resultEnvelope"] as JsonObject
-                       ?? throw new V2ProtocolException("E-MANIFEST", "El resultado no trae resultEnvelope.");
-        var original = CcEnvelope.Open(envelope, result.Data, _identity.NodeId, _identity.Thumbprint, _identity.PrivateKeyPem, result.PacketId);
+                       ?? result.Manifest["envelope"] as JsonObject
+                       ?? result.Manifest["secretEnvelope"] as JsonObject;
+        byte[] original;
+        try
+        {
+            if (envelope is null)
+            {
+                throw new V2ProtocolException("E-MANIFEST", "El resultado no trae resultEnvelope.");
+            }
+
+            original = CcEnvelope.Open(envelope, result.Data, _identity.NodeId, _identity.Thumbprint, _identity.PrivateKeyPem, result.PacketId,
+                (string?)result.Manifest["requestId"], source.PacketId);
+        }
+        catch (V2ProtocolException ex)
+        {
+            // Se guarda el resultado tal cual llegó para poder revisar su manifiesto en Consultas.
+            var failed = _store.Add(result, "consulta", "Resultado");
+            failed.Note = $"Llegó de {provider} pero no se pudo abrir: {ex.Code} {ex.Message}";
+            _store.Save(failed);
+            await Log("operate.inverse", $"Resultado de {provider} guardado sin abrir ({ex.Code}): {result.FileName}.").ConfigureAwait(false);
+            throw;
+        }
+
         var record = _store.Add(result, "consulta", "Resultado");
         var name = source.Str("originalFileName");
         _store.SaveRecovered(record.Id, string.IsNullOrEmpty(name) ? "recuperado.bin" : name, original);

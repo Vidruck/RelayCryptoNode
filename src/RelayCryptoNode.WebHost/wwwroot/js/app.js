@@ -133,7 +133,7 @@ function goTo(view) {
 }
 
 function refreshView(view) {
-  const map = { consola: loadOverview, red: loadDirectory, solicitudes: loadSolicitudes, consultas: loadConsultas, v1: loadV1, operar: () => selectAlgo($("#fwdAlgo").value) };
+  const map = { consola: loadOverview, red: loadDirectory, solicitudes: loadSolicitudes, consultas: loadConsultas, v1: loadV1, bitacora: loadHistorico, operar: () => selectAlgo($("#fwdAlgo").value) };
   map[view]?.().catch?.((e) => toast(e.message, "bad"));
 }
 
@@ -476,9 +476,11 @@ async function loadSolicitudes() {
     <td><div class="row-actions">
       <button class="btn sm" data-man="${s.id}" type="button">Manifiesto</button>
       ${s.status === "Pendiente" ? `<button class="btn sm ok" data-acc="${s.id}" type="button">Aceptar</button><button class="btn sm danger" data-rej="${s.id}" type="button">Rechazar</button>` : ""}
+      ${hideBtn(s.id)}
     </div></td></tr>`).join("");
   $("#solEmpty").classList.toggle("hidden", list.length > 0);
   $$("#solBody [data-man]").forEach((b) => b.addEventListener("click", () => showManifest(b.dataset.man)));
+  bindHide("#solBody", loadSolicitudes);
   $$("#solBody [data-acc]").forEach((b) => b.addEventListener("click", async () => {
     await api(`/api/ui/solicitudes/${b.dataset.acc}/accept`, { method: "POST" });
     toast("Aceptada: ya está en Consultas.", "ok");
@@ -520,11 +522,66 @@ async function loadConsultas() {
       ${c.recoveredFileName ? `<a class="btn sm ok" href="/api/ui/packets/${c.id}/recovered">Original</a>` : ""}
       ${c.algorithmCode === "LSBSTEGO" && c.packetType === "package" ? `<a class="btn sm" href="/api/ui/packets/${c.id}/data" target="_blank" rel="noopener">Imagen</a>` : ""}
       <button class="btn sm" data-send="${c.id}" type="button">Enviar</button>
+      ${hideBtn(c.id)}
     </div></td></tr>`).join("");
   $("#conEmpty").classList.toggle("hidden", list.length > 0);
   $$("#conBody [data-man]").forEach((b) => b.addEventListener("click", () => showManifest(b.dataset.man)));
   $$("#conBody [data-send]").forEach((b) => b.addEventListener("click", () => sendDialog(b.dataset.send)));
   $$("#conBody [data-inv]").forEach((b) => b.addEventListener("click", () => inverseDialog(list.find((c) => c.id === b.dataset.inv))));
+  bindHide("#conBody", loadConsultas);
+}
+
+// ---------------------------------------------------------------- borrar de la vista e histórico
+function hideBtn(id) {
+  return `<button class="btn sm danger x-del" data-hide="${id}" type="button" title="Quitar de aquí (se queda en el Histórico)" aria-label="Quitar">×</button>`;
+}
+
+function bindHide(scope, reload) {
+  $$(`${scope} [data-hide]`).forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await api(`/api/ui/packets/${b.dataset.hide}`, { method: "DELETE" });
+      toast("Quitado. Sigue en el Histórico (07 Bitácora).", "ok");
+      reload();
+    } catch (err) { toast(err.message, "bad"); }
+  }));
+}
+
+async function loadHistorico() {
+  let data;
+  try { data = await api("/api/ui/historico"); } catch (err) { toast(err.message, "bad"); return; }
+  const kind = { solicitud: "Recibido", consulta: "Consulta" };
+  const rows = data.packets.map((p) => ({ at: p.createdUtc, html: `<tr class="${p.hidden ? "row-muted" : ""}">
+    <td>${time(p.createdUtc)}</td>
+    <td><span class="tag ${p.kind === "solicitud" ? "ok" : "purple"}">${esc(kind[p.kind] || p.kind)}</span><br><span class="muted small">${esc(p.origin)}</span></td>
+    <td class="mono small">${esc(p.fileName)}</td>
+    <td>${esc(p.algorithmCode)}<br><span class="muted small">${esc(p.operationName)}</span></td>
+    <td class="mono">${esc(p.sourceNode)}</td>
+    <td>${p.hidden ? `<span class="tag off">borrado de la vista</span>` : `<span class="tag ok">visible</span>`}${p.note ? `<br><span class="muted small">${esc(p.note)}</span>` : ""}</td>
+    <td><div class="row-actions">
+      <a class="btn sm" href="/api/ui/packets/${p.id}/zip">.zip</a>
+      <button class="btn sm" data-man="${p.id}" type="button">Manifiesto</button>
+      ${p.recoveredFileName ? `<a class="btn sm ok" href="/api/ui/packets/${p.id}/recovered">Original</a>` : ""}
+      ${p.hidden ? `<button class="btn sm gold" data-restore="${p.id}" type="button">Restaurar</button>` : ""}
+    </div></td></tr>` }));
+  data.refused.forEach((r) => rows.push({ at: r.receivedUtc, html: `<tr class="row-bad ${r.hidden ? "row-muted" : ""}">
+    <td>${time(r.receivedUtc)}</td>
+    <td><span class="tag bad">Rechazado</span></td>
+    <td class="small">${esc(r.fileName || "—")}</td>
+    <td>${esc(r.algorithmCode || "—")}</td>
+    <td class="mono">${esc(r.sourceNode || "¿?")}<br><span class="muted small">${esc(r.sourceIp)}</span></td>
+    <td><span class="tag bad">${esc(r.code)}</span>${r.hidden ? ` <span class="tag off">borrado de la vista</span>` : ""}<br><span class="muted small">${esc(r.reason)}</span></td>
+    <td></td></tr>` }));
+  rows.sort((a, b) => new Date(b.at) - new Date(a.at));
+  $("#histBody").innerHTML = rows.map((r) => r.html).join("");
+  $("#histEmpty").classList.toggle("hidden", rows.length > 0);
+  $$("#histBody [data-man]").forEach((b) => b.addEventListener("click", () => showManifest(b.dataset.man)));
+  $$("#histBody [data-restore]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await api(`/api/ui/packets/${b.dataset.restore}/restore`, { method: "POST" });
+      toast("Restaurado.", "ok");
+      loadHistorico();
+    } catch (err) { toast(err.message, "bad"); }
+  }));
 }
 
 async function showManifest(id) {
@@ -602,6 +659,14 @@ async function loadLock() {
 
 function setupInbox() {
   $("#goV1").addEventListener("click", () => goTo("v1"));
+  $("#clearInbox").addEventListener("click", async (e) => {
+    try {
+      const r = await busy(e.currentTarget, () => api("/api/ui/solicitudes/clear", { method: "POST" }));
+      toast(`Bandeja vacía (${r.cleared}). Todo sigue en el Histórico (07 Bitácora).`, "ok");
+      loadSolicitudes();
+    } catch (err) { toast(err.message, "bad"); }
+  });
+  $("#histReload").addEventListener("click", loadHistorico);
   $("#lockReq").addEventListener("click", async () => {
     const next = !$("#lockReq").classList.contains("is-locked");
     $("#lockReq").classList.add("turning");

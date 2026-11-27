@@ -65,6 +65,12 @@ public sealed class PacketRecord
 
     /// <summary>Archivo recuperado por un inverse (si existe).</summary>
     public string? RecoveredFileName { get; set; }
+
+    /// <summary>Borrado de la vista (Recibidos / Consultas); sigue en el histórico y en disco.</summary>
+    public bool Hidden { get; set; }
+
+    /// <summary>Cuándo se borró de la vista.</summary>
+    public DateTimeOffset? HiddenUtc { get; set; }
 }
 
 /// <summary>
@@ -138,8 +144,27 @@ public sealed class PacketStore
     {
         lock (_sync)
         {
-            return _records.Values.Where(r => r.Kind == kind).OrderByDescending(r => r.CreatedUtc).ToList();
+            return _records.Values.Where(r => r.Kind == kind && !r.Hidden).OrderByDescending(r => r.CreatedUtc).ToList();
         }
+    }
+
+    /// <summary>Histórico: todos los registros, también los borrados de la vista.</summary>
+    public List<PacketRecord> ListAll()
+    {
+        lock (_sync)
+        {
+            return _records.Values.OrderByDescending(r => r.CreatedUtc).ToList();
+        }
+    }
+
+    /// <summary>Borra (o restaura) un registro de la vista. Nunca borra el archivo: queda en el histórico.</summary>
+    public PacketRecord SetHidden(string id, bool hidden)
+    {
+        var record = Get(id);
+        record.Hidden = hidden;
+        record.HiddenUtc = hidden ? DateTimeOffset.UtcNow : null;
+        Save(record);
+        return record;
     }
 
     /// <summary>Busca un registro.</summary>
