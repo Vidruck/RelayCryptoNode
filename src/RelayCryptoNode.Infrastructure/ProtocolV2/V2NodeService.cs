@@ -67,7 +67,7 @@ public sealed class V2NodeService
     private readonly IRealtimeNotifierPort _notifier;
     private readonly SemaphoreSlim _cryptoSlots = new(10, 10);
 
-    /// <summary>Modo del panel: v1 (formato anterior), v2 (estándar: cada algoritmo con su dueño) o v3 (los 21 locales).</summary>
+    /// <summary>Modo del panel: v1 (formato anterior), v2 (estándar: cada algoritmo con su dueño), v3 (los 21 locales) o v4 (v3 + descifrar en local paquetes de otros equipos con su clave).</summary>
     public string Mode => _mode;
 
     /// <summary>Registra los proveedores locales del modo v3 y el archivo donde se guarda el modo elegido.</summary>
@@ -82,7 +82,7 @@ public sealed class V2NodeService
         if (File.Exists(modeFile))
         {
             var saved = File.ReadAllText(modeFile).Trim();
-            if (saved is "v1" or "v2" or "v3")
+            if (saved is "v1" or "v2" or "v3" or "v4")
             {
                 _mode = saved;
             }
@@ -121,9 +121,9 @@ public sealed class V2NodeService
     /// <summary>Cambia el modo (v1, v2 o v3) y lo guarda.</summary>
     public void SetMode(string mode)
     {
-        if (mode is not ("v1" or "v2" or "v3"))
+        if (mode is not ("v1" or "v2" or "v3" or "v4"))
         {
-            throw new V2ProtocolException("E-REQUEST", "El modo debe ser v1, v2 o v3.");
+            throw new V2ProtocolException("E-REQUEST", "El modo debe ser v1, v2, v3 o v4.");
         }
 
         _mode = mode;
@@ -141,11 +141,53 @@ public sealed class V2NodeService
             return own;
         }
 
-        return _mode == "v3" && _v3Providers.TryGetValue(code, out var local) ? local : null;
+        return _mode is "v3" or "v4" && _v3Providers.TryGetValue(code, out var local) ? local : null;
     }
 
     private readonly List<RefusedPacket> _refused = new();
     private readonly List<RefusedPacket> _refusedHistory = new();
+    private string? _refusedFile;
+
+    /// <summary>Carga los rechazados guardados (sobreviven a reiniciar el nodo).</summary>
+    public void LoadRefused(string file)
+    {
+        _refusedFile = file;
+        if (!File.Exists(file))
+        {
+            return;
+        }
+
+        try
+        {
+            var saved = JsonSerializer.Deserialize<RefusedFile>(File.ReadAllText(file));
+            lock (_refused)
+            {
+                _refused.AddRange(saved?.Current ?? []);
+                _refusedHistory.AddRange(saved?.History ?? []);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+    }
+
+    private void SaveRefused()
+    {
+        if (_refusedFile is null)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(_refusedFile, JsonSerializer.Serialize(new RefusedFile(_refused.ToList(), _refusedHistory.Take(500).ToList())));
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private sealed record RefusedFile(List<RefusedPacket> Current, List<RefusedPacket> History);
 
     /// <summary>Rechazados que ya se borraron de la bandeja (histórico; solo en memoria).</summary>
     public IReadOnlyList<RefusedPacket> RefusedHistory
@@ -190,6 +232,7 @@ public sealed class V2NodeService
             count += _refused.Count;
             _refusedHistory.InsertRange(0, _refused);
             _refused.Clear();
+            SaveRefused();
         }
 
         await Log("historico", $"Se vació la bandeja de recibidos ({count} elementos); todo sigue en el histórico.").ConfigureAwait(false);
@@ -233,8 +276,11 @@ public sealed class V2NodeService
             _refused.Insert(0, new RefusedPacket(DateTimeOffset.UtcNow, sourceIp, node, algorithm, file, code, reason, zipBytes.LongLength));
             if (_refused.Count > 100)
             {
+                _refusedHistory.Insert(0, _refused[^1]);
                 _refused.RemoveAt(_refused.Count - 1);
             }
+
+            SaveRefused();
         }
     }
 
@@ -686,6 +732,35 @@ public sealed class V2NodeService
         string? providerNode,
         CancellationToken ct = default)
     {
+        try
+        {
+            return await InverseCoreAsync(consultaId, secrets, providerNode, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is V2ProtocolException or HttpRequestException or TaskCanceledException)
+        {
+            // El error se queda anotado en el paquete (columna Nota) para revisarlo después.
+            var code = ex is V2ProtocolException p ? p.Code : ex is HttpRequestException ? "E-NETWORK" : "E-TIMEOUT";
+            try
+            {
+                var record = _store.Get(consultaId);
+                record.Note = $"Último INVERTIR ({DateTimeOffset.Now:HH:mm}) falló: {code} {ex.Message}";
+                _store.Save(record);
+            }
+            catch (Exception)
+            {
+            }
+
+            await Log("operate.inverse", $"INVERTIR falló: {code} {ex.Message}").ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<V2OperationResult> InverseCoreAsync(
+        string consultaId,
+        IReadOnlyDictionary<string, string> secrets,
+        string? providerNode,
+        CancellationToken ct)
+    {
         var source = Load(consultaId, validate: false);
         var algorithm = V2Catalog.ByCode(source.AlgorithmCode) ?? throw new V2ProtocolException("E-ALGORITHM", "Algoritmo desconocido.");
         V2Package result;
@@ -699,7 +774,17 @@ public sealed class V2NodeService
             own = null;
         }
 
-        if (own is not null && (providerNode is null || providerNode == _identity.NodeId))
+        var standardLocal = own is null && _mode == "v4" && source.ProducerNode != _identity.NodeId
+                            && (providerNode is null || providerNode == _identity.NodeId)
+                            && StandardInverse.CanRun(algorithm.Code, secrets);
+        if (standardLocal)
+        {
+            // v4: paquete de otro equipo + clave escrita → se descifra aquí con el formato de la tabla 4.2.
+            var inverse = StandardInverse.Run(algorithm.Code, source.Data, WithPacketId(source), secrets, source.PacketId);
+            result = BuildResult(source, algorithm, V2Format.NewUuid(), _identity.NodeId, _identity.CertificatePem, inverse);
+            provider = _identity.NodeId;
+        }
+        else if (own is not null && (providerNode is null || providerNode == _identity.NodeId))
         {
             var requestId = V2Format.NewUuid();
             var inverse = own.Inverse(source.Data, WithPacketId(source), secrets);
@@ -755,9 +840,19 @@ public sealed class V2NodeService
         _store.SaveRecovered(record.Id, string.IsNullOrEmpty(name) ? "recuperado.bin" : name, original);
         var verification = result.Manifest["verification"] as JsonObject;
         record = _store.Get(record.Id);
-        record.Note = (delegated ? $"Invertido por {provider}" : "Invertido localmente")
+        record.Note = (delegated ? $"Invertido por {provider}" : standardLocal ? "Invertido localmente (v4, formato del estándar)" : "Invertido localmente")
                       + (verification is not null ? $" · válido: {verification["valid"]}" : string.Empty);
         _store.Save(record);
+        try
+        {
+            var sourceRecord = _store.Get(consultaId);
+            sourceRecord.Note = $"Invertido OK ({DateTimeOffset.Now:HH:mm}) → {record.FileName}";
+            _store.Save(sourceRecord);
+        }
+        catch (Exception)
+        {
+        }
+
         await Log("operate.inverse", $"{algorithm.Code} {algorithm.InverseName} de {source.FileName} por {provider}: {original.Length} bytes recuperados.").ConfigureAwait(false);
         return new V2OperationResult(record, result, delegated, provider, original, verification);
     }

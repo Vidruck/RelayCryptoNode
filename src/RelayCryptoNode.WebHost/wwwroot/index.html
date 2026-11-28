@@ -25,6 +25,7 @@
         <label title="Formato anterior (NODO04)"><input type="radio" name="protoMode" value="v1"><span>v1</span></label>
         <label title="Estándar: cada algoritmo lo ejecuta su equipo dueño"><input type="radio" name="protoMode" value="v2" checked><span>v2</span></label>
         <label title="Los 21 algoritmos se cifran y descifran en este nodo"><input type="radio" name="protoMode" value="v3"><span>v3</span></label>
+        <label title="v3 + descifrar aquí los paquetes de otros equipos con la clave que te pasaron"><input type="radio" name="protoMode" value="v4"><span>v4</span></label>
       </div>
       <div class="user-box"><span id="hdrUser">—</span><button class="btn sm" id="btnLogout" type="button">Salir</button></div>
     </div>
@@ -317,6 +318,19 @@
       <article class="panel terminal">
         <h2 class="ptitle">Bitácora en vivo</h2>
         <ul class="log" id="logList"></ul>
+      </article>
+      <article class="panel">
+        <div class="phead">
+          <h2 class="ptitle">Conexiones entrantes <span class="hint">(todo lo que otras máquinas mandan a este nodo, aunque se rechace; se guarda en datos/entradas.log)</span></h2>
+          <button class="btn sm" type="button" id="inReload">Actualizar</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Fecha</th><th>IP</th><th>Petición</th><th>Respuesta</th><th>Tamaño</th><th>Detalle</th></tr></thead>
+            <tbody id="inBody"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="inEmpty">Todavía no llega nada de otras máquinas.</p>
       </article>
       <article class="panel">
         <div class="phead">

@@ -90,6 +90,7 @@ builder.Services.AddSingleton(sp =>
     service.EnableV3(implemented.Concat(V3LocalProviders.Create(identity, settings.DataDirectory)),
         Path.Combine(settings.DataDirectory, "modo-protocolo.txt"));
     service.LoadReception(Path.Combine(settings.DataDirectory, "requestid-obligatorio.txt"));
+    service.LoadRefused(Path.Combine(settings.DataDirectory, "rechazados.json"));
     return service;
 });
 builder.Services.AddSingleton(sp => new DiscoveryService(sp.GetRequiredService<V2NodeService>(), sp.GetRequiredService<ILogger<DiscoveryService>>())
@@ -143,6 +144,50 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     });
 
 var app = builder.Build();
+var inbound = new InboundLog(settings.DataDirectory);
+
+// Conexiones que llegan de otras máquinas (otros nodos): se guardan con ruta, IP y respuesta,
+// para revisar después si un equipo de verdad mandó algo y qué se le contestó.
+app.Use(async (context, next) =>
+{
+    var ip = context.Connection.RemoteIpAddress;
+    var remote = ip is not null && !System.Net.IPAddress.IsLoopback(ip);
+    var watch = System.Diagnostics.Stopwatch.StartNew();
+    string? error = null;
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        error = ex.GetType().Name + ": " + ex.Message;
+        throw;
+    }
+    finally
+    {
+        var path = context.Request.Path.Value ?? "/";
+        var panelAsset = path.StartsWith("/api/ui", StringComparison.OrdinalIgnoreCase)
+                         || path.StartsWith("/auth/", StringComparison.OrdinalIgnoreCase)
+                         || path.StartsWith("/css/", StringComparison.OrdinalIgnoreCase)
+                         || path.StartsWith("/js/", StringComparison.OrdinalIgnoreCase)
+                         || path is "/" or "/index.html" or "/login.html" or "/favicon.ico";
+        if (remote && !panelAsset)
+        {
+            inbound.Add(new InboundEntry(
+                DateTimeOffset.UtcNow,
+                ip!.MapToIPv4().ToString(),
+                context.Request.Method,
+                path + context.Request.QueryString,
+                error is null ? context.Response.StatusCode : 500,
+                context.Request.ContentLength,
+                watch.ElapsedMilliseconds,
+                context.Request.Headers["X-CC-Node-Id"].FirstOrDefault() ?? context.Request.Headers["X-CC-Source-Node"].FirstOrDefault(),
+                error));
+        }
+    }
+});
+
+app.MapGet("/api/ui/entradas", () => Results.Ok(inbound.Recent()));
 
 app.Use(async (context, next) =>
 {

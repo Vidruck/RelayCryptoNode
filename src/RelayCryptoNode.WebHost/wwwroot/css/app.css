@@ -155,7 +155,7 @@ input[type=file]::file-selector-button { background: var(--purple-lo); color: va
 .params legend small { color: var(--muted); text-transform: none; letter-spacing: 0; }
 .params.secret { border-color: rgba(255, 77, 94, 0.35); }
 .params.secret legend { color: var(--red); }
-.field-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; }
+.field-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; }
 .seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; width: fit-content; }
 .seg label { display: block; cursor: pointer; }
 .seg input { display: none; }
@@ -356,3 +356,7 @@ input[type=file]::file-selector-button { background: var(--purple-lo); color: va
 /* Quitar de la vista (la fila se queda en el histórico) */
 .btn.x-del { min-width: 28px; font-size: 15px; line-height: 1; padding: 3px 8px; }
 .table tr.row-muted td { opacity: 0.55; }
+
+/* Modo v4: v3 + descifrar en local paquetes ajenos con su clave */
+.mode-banner.v4 { border-left-color: var(--gold); }
+.mode-banner.v4 b { color: var(--gold); }

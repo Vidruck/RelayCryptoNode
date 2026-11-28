@@ -194,16 +194,29 @@ function drawRadar() {
 }
 
 // ---------------------------------------------------------------- versión (v1 / v2 / v3)
+// Secretos de la tabla 4.2 para paquetes de OTROS equipos (la clave te la pasa ese equipo; no se genera).
+const STD_SECRETS = {
+  AESGCM: [{ name: "key", type: "base64", bytes: "16 o 32", noGen: true }],
+  DES: [{ name: "key", type: "base64", bytes: 8, noGen: true }],
+  TRIPLEDES: [{ name: "key", type: "base64", bytes: 24, noGen: true }],
+  CHACHA20: [{ name: "key", type: "base64", bytes: 32, noGen: true }],
+  CAESAR: [{ name: "shift", type: "integer" }],
+  VIGENERE: [{ name: "key", type: "text" }],
+  HMACSHA256: [{ name: "key", type: "text", description: "Base64 o texto" }],
+  HASHSHA: []
+};
+
 const MODE_TEXT = {
   v1: "<b>v1</b> · formato anterior (NODO04). Usa la pestaña <b>Modo v1</b> para emitir; aquí se sigue usando el estándar.",
   v2: "<b>v2</b> · estándar: los algoritmos del EQ06 (11 y 12) se ejecutan aquí y los demás se le piden a su equipo dueño.",
-  v3: "<b>v3</b> · los <b>21 algoritmos</b> se cifran y descifran en este nodo. Los paquetes siguen siendo v2.0 válidos."
+  v3: "<b>v3</b> · los <b>21 algoritmos</b> se cifran y descifran en este nodo. Los paquetes siguen siendo v2.0 válidos.",
+  v4: "<b>v4</b> · todo lo de v3 y además los paquetes de <b>otros equipos</b> (AES-GCM, DES, 3DES, ChaCha20, César, Vigenère, HMAC, Hash) se descifran <b>aquí mismo</b> si escribes la clave que te pasaron, aunque su nodo esté apagado."
 };
 
 function applyMode(mode) {
   state.mode = mode || "v2";
   $$("input[name=protoMode]").forEach((r) => { r.checked = r.value === state.mode; });
-  $("#hdrProto").textContent = state.mode === "v3" ? "v3 · 21 locales" : state.mode === "v1" ? "v1 (NODO04)" : "v2.0";
+  $("#hdrProto").textContent = state.mode === "v4" ? "v4 · 21 locales + claves" : state.mode === "v3" ? "v3 · 21 locales" : state.mode === "v1" ? "v1 (NODO04)" : "v2.0";
   $("#modeBanner").innerHTML = MODE_TEXT[state.mode];
   $("#modeBanner").className = `mode-banner ${state.mode}`;
 }
@@ -267,8 +280,9 @@ function fieldHtml(field, prefix, secret) {
     return `<label>${esc(field.name)}<select data-name="${field.name}" id="${id}">${(field.values || []).map((v) => `<option ${v === field.default ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label>`;
   }
   const placeholder = field.type === "base64" ? `Base64 de ${field.bytes || "N"} bytes` : field.type === "integer" ? "número entero" : field.optional ? "opcional" : "";
+  const canGenerate = field.type === "base64" && !field.noGen;
   const input = `<input data-name="${field.name}" id="${id}" ${secret ? 'type="password"' : ""} value="${esc(field.default || "")}" placeholder="${placeholder}" autocomplete="off">`;
-  const gen = (field.type === "base64" ? `<button class="btn sm gold" type="button" data-gen="${id}" data-bytes="${field.bytes || 32}">Generar</button>` : "")
+  const gen = (canGenerate ? `<button class="btn sm gold" type="button" data-gen="${id}" data-bytes="${field.bytes || 32}">Generar</button>` : "")
     + (secret ? `<button class="btn sm" type="button" data-peek="${id}" title="Mostrar u ocultar la clave">Ver</button>` : "");
   const label = `${esc(field.name)}${field.optional ? " (opcional)" : ""}${field.description ? ` · ${esc(field.description)}` : ""}`;
   return gen ? `<label>${label}<div class="field-row">${input}${gen}</div></label>` : `<label>${label}${input}</label>`;
@@ -553,7 +567,22 @@ function bindHide(scope, reload) {
   }));
 }
 
+async function loadEntradas() {
+  let list;
+  try { list = await api("/api/ui/entradas"); } catch (err) { toast(err.message, "bad"); return; }
+  const kb = (n) => (n == null ? "—" : n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+  $("#inBody").innerHTML = list.slice(0, 200).map((e) => `<tr class="${e.status >= 400 ? "row-bad" : ""}">
+    <td>${time(e.atUtc)}</td>
+    <td class="mono">${esc(e.ip)}${e.node ? `<br><span class="muted small">${esc(e.node)}</span>` : ""}</td>
+    <td class="mono small">${esc(e.method)} ${esc(e.path)}</td>
+    <td><span class="tag ${e.status < 300 ? "ok" : e.status < 500 ? "gold" : "bad"}">${e.status}</span> <span class="muted small">${e.ms} ms</span></td>
+    <td class="small">${kb(e.bytes)}</td>
+    <td class="muted small">${esc(e.error || "")}</td></tr>`).join("");
+  $("#inEmpty").classList.toggle("hidden", list.length > 0);
+}
+
 async function loadHistorico() {
+  loadEntradas();
   let data;
   try { data = await api("/api/ui/historico"); } catch (err) { toast(err.message, "bad"); return; }
   const kind = { solicitud: "Recibido", consulta: "Consulta" };
@@ -625,11 +654,19 @@ async function inverseDialog(record) {
   const params = normalizeProfile(algo.code, await profileFor(algo));
   const self = state.overview?.nodeId;
   const foreign = !!record.producerNode && record.producerNode !== self;
-  const secrets = params.secrets.length ? params.secrets.map((f) => fieldHtml(f, "isec", true)).join("") : '<p class="hint">No requiere secretos.</p>';
+  const std = foreign ? STD_SECRETS[algo.code] : undefined;
+  const fields = std || params.secrets;
+  const secrets = fields.length ? fields.map((f) => fieldHtml(f, "isec", true)).join("") : '<p class="hint">No requiere secretos.</p>';
+  const localV3 = foreign && std && state.mode === "v4";
+  const foreignHint = localV3
+    ? (std.length
+      ? `<p class="hint"><b class="ok">Modo v4:</b> escribe la clave que te pasó <b class="gold">${esc(record.producerNode)}</b> y se descifra <b>aquí mismo</b> con el formato del estándar (no importa si su nodo está apagado). Si la dejas vacía se le pide a ${esc(record.producerNode)}.</p>`
+      : `<p class="hint"><b class="ok">Modo v4:</b> se verifica <b>aquí mismo</b> (no necesita clave).</p>`)
+    : `<p class="hint">Lo ejecuta <b class="gold">${esc(record.producerNode)}</b> (dueño del paquete). Si su paquete trae keyRef deja la clave vacía (el dueño usa la que guardó); si no, escribe la clave que te pasó. El resultado regresa cifrado para ti en un sobre CC-ENV-1.</p>`;
   const body = modal(`Invertir · ${algo.code} (${algo.inverseName})`, `
     <form class="form" id="invForm">
       ${foreign
-        ? `<p class="hint">Lo ejecuta <b class="gold">${esc(record.producerNode)}</b> (dueño del paquete). Deja la clave vacía: el dueño usa la que guardó con su keyId. El resultado regresa cifrado para ti en un sobre CC-ENV-1.</p>`
+        ? foreignHint
         : `<p class="hint">Lo ejecuta <b class="gold">${esc(algo.provider || algo.owner || "—")}</b>${algo.local ? " (local)" : " (delegado)"}. Si el paquete es tuyo puedes dejar la clave vacía: el nodo la guardó con su keyId.</p>`}
       <fieldset class="params secret"><legend>Secretos</legend>${secrets}</fieldset>
       <div class="row-actions"><button class="btn primary" type="submit">Ejecutar inverse</button></div>
@@ -678,6 +715,7 @@ function setupInbox() {
     } catch (err) { toast(err.message, "bad"); }
   });
   $("#histReload").addEventListener("click", loadHistorico);
+  $("#inReload").addEventListener("click", loadEntradas);
   $("#lockReq").addEventListener("click", async () => {
     const next = !$("#lockReq").classList.contains("is-locked");
     $("#lockReq").classList.add("turning");
